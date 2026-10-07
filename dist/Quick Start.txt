@@ -119,9 +119,13 @@ Select an area: Ctrl+Alt+S by default, followed by click-and-drag selection.
 Instant capture: Ctrl+Alt+F by default, opens all monitors and the pointer in the editor.
 Hover a menu and press either shortcut: the screen freezes before focus changes.
 Keep the app running for the shortcuts. Backspace disables either one independently.
-Pause works by itself: click a shortcut and press Pause/Break. Esc cancels recording.
+Single keys work: Print Screen, Page Up, Page Down, F5, Pause or another key.
+You can also combine a key with Ctrl, Alt, Shift or Win. Esc cancels recording.
 The original shortcut dialog in Top toolbars uses its Save button.
-Other shortcuts need Ctrl or Alt; F12 is reserved.
+These are global: your assigned key overrides its usual action in other apps.
+F12 is reserved. Unavailable shortcuts show an error and keep the previous bindings.
+If Print Screen opens Windows Snipping Tool, turn off its Print Screen shortcut in
+Windows Settings > Accessibility > Keyboard.
 File and the tray menu also offer Capture all monitors now.
 
 General > Software rendering in Side panels switches immediately and saves the choice.

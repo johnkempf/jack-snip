@@ -47,6 +47,16 @@ also offers an instant capture of all monitors. Zoom and Fit are in the bottom b
 Top toolbars retains the native menu bar and the original controls above the image.
 Copy feedback is a brief white pulse over the image, including its transparency; it never changes exports.
 
+Capture shortcuts accept single keys such as **Print Screen**, **Page Up**, **Page Down**,
+**F5** or **Pause**, and combinations with **Ctrl**, **Alt**, **Shift** or **Win**.
+They work globally while Tiger Snip is running, so the assigned key takes over its usual
+action in other apps (including typing if you choose a letter). **F12** is reserved by
+Windows; other reserved or already registered shortcuts show an error and keep the previous
+bindings. In shortcut fields, bare **Esc** cancels and **Backspace/Delete** disables;
+the original dialog also uses **Tab** to move focus and **Enter** to save.
+If Print Screen opens Windows Snipping Tool, turn off **Use the Print Screen button to
+open screen snipping** in **Windows Settings → Accessibility → Keyboard**.
+
 [Application information](APP-INFO.md) describes installation and data storage.
 
 ## Build

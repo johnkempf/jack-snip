@@ -47,12 +47,17 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
         rt->FillRoundedRectangle(
             D2D1::RoundedRect({r.left, r.top, r.right, r.bottom}, radius, radius), brush);
     };
-    auto text = [&](const std::wstring &s, Rect r, Color fg, bool small = false) {
+    auto text = [&](const std::wstring &s, Rect r, Color fg, bool small = false, bool wrap = false) {
         auto font = small ? app.graphics.smallFont.get() : app.graphics.font.get();
         font->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const auto wrapping = font->GetWordWrapping();
+        if (wrap)
+            font->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         brush->SetColor(color(fg));
         rt->DrawText(s.c_str(), static_cast<UINT32>(s.size()), font,
                      {r.left, r.top, r.right, r.bottom}, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if (wrap)
+            font->SetWordWrapping(wrapping);
     };
     brush->SetColor(color(rgb(0, 0, 0), app.darkTheme ? .46f : .16f));
     rt->FillRectangle({0, 0, c.right, c.bottom}, brush);
@@ -71,7 +76,7 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
          uiBorder());
     text(app.settingsError.empty() ? L"Changes are saved automatically." : app.settingsError,
          {l.panel.left + 24, l.panel.bottom - 46, l.panel.right - 124, l.panel.bottom - 10},
-         app.settingsError.empty() ? Muted : Ink, true);
+         app.settingsError.empty() ? Muted : Ink, true, true);
     for (const auto &control : l.controls)
     {
         const auto r = control.rect;
@@ -91,7 +96,7 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
         {
             text(control.title, {r.left, r.top, r.right, r.top + 29}, Ink);
             if (!control.detail.empty())
-                text(control.detail, {r.left, r.top + 30, r.right, r.bottom}, Muted, true);
+                text(control.detail, {r.left, r.top + 30, r.right, r.bottom}, Muted, true, true);
         }
         else
         {
