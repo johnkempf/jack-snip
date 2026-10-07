@@ -131,7 +131,11 @@ SettingsPanelLayout settingsPanelLayout()
                 : hotkeyName(app.instantHotkey),
             82);
         row(0, SettingsControlKind::Text, L"Click a shortcut to change it.",
-            L"Use Ctrl or Alt, or Pause by itself. F12 is reserved.", 64);
+            L"Use a single key or Ctrl/Alt/Shift/Win + key. Global shortcuts override "
+            L"other apps. F12 is reserved.", 90);
+        row(0, SettingsControlKind::Text, L"Print Screen",
+            L"If Windows opens its own capture tool, turn off the Print Screen shortcut "
+            L"in Windows Settings > Accessibility > Keyboard.", 90);
         row(AutoCopy, SettingsControlKind::Toggle, L"Auto copy new snips",
             L"New captures go straight to the clipboard.");
         break;

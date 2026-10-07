@@ -495,9 +495,9 @@ int wmain()
         GetKeyboardState(previousKeyboard);
         SetKeyboardState(emptyKeyboard);
         command(SettingsAreaKey);
-        processKey('A');
+        processKey(VK_F12);
         require(app.settingsRecording && !app.settingsError.empty() && app.hotkey == savedArea,
-                "Settings accepted an invalid plain letter shortcut.");
+                "Settings accepted the reserved F12 shortcut.");
         processKey(VK_ESCAPE);
         require(app.settingsPanelOpen && !app.settingsRecording && app.hotkey == savedArea,
                 "Cancelling shortcut recording changed the shortcut or closed Settings.");

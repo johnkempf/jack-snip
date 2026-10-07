@@ -761,10 +761,35 @@ void saveToolPreferencesOrNotify()
     if (!saveToolPreferences())
         error(app.window, app.preferenceError.c_str());
 }
+// Keep the existing INI WORD format; 0x10 is unused by HOTKEYF_*.
+constexpr BYTE ShortcutWin = 0x10;
+bool shortcutModifier(WPARAM key)
+{
+    return key == VK_CONTROL || key == VK_LCONTROL || key == VK_RCONTROL ||
+           key == VK_MENU || key == VK_LMENU || key == VK_RMENU || key == VK_SHIFT ||
+           key == VK_LSHIFT || key == VK_RSHIFT || key == VK_LWIN || key == VK_RWIN;
+}
+WORD shortcutFromKey(WPARAM key, LPARAM info)
+{
+    BYTE flags = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000)
+        flags |= HOTKEYF_CONTROL;
+    if (GetKeyState(VK_MENU) & 0x8000)
+        flags |= HOTKEYF_ALT;
+    if (GetKeyState(VK_SHIFT) & 0x8000)
+        flags |= HOTKEYF_SHIFT;
+    if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
+        flags |= ShortcutWin;
+    if (key != VK_PAUSE && (info & (1LL << 24)))
+        flags |= HOTKEYF_EXT;
+    return MAKEWORD(static_cast<BYTE>(key), flags);
+}
 std::wstring hotkeyName(WORD value)
 {
     std::wstring result;
     BYTE modifiers = HIBYTE(value), key = LOBYTE(value);
+    if (modifiers & ShortcutWin)
+        result += L"Win+";
     if (modifiers & HOTKEYF_CONTROL)
         result += L"Ctrl+";
     if (modifiers & HOTKEYF_ALT)
@@ -775,6 +800,12 @@ std::wstring hotkeyName(WORD value)
         return L"Disabled";
     if (key == VK_PAUSE)
         result += L"Pause";
+    else if (key == VK_SNAPSHOT)
+        result += L"Print Screen";
+    else if (key == VK_PRIOR)
+        result += L"Page Up";
+    else if (key == VK_NEXT)
+        result += L"Page Down";
     else if (key >= 'A' && key <= 'Z')
         result += static_cast<wchar_t>(key);
     else if (key >= '0' && key <= '9')
@@ -788,7 +819,7 @@ std::wstring hotkeyName(WORD value)
         if (modifiers & HOTKEYF_EXT)
             scan |= 1 << 24;
         GetKeyNameTextW(scan, name, 64);
-        result += name;
+        result += name[0] ? std::wstring(name) : L"Key " + std::to_wstring(key);
     }
     return result;
 }
@@ -796,6 +827,8 @@ UINT hotkeyModifiers(WORD value)
 {
     UINT modifiers = MOD_NOREPEAT;
     BYTE flags = HIBYTE(value);
+    if (flags & ShortcutWin)
+        modifiers |= MOD_WIN;
     if (flags & HOTKEYF_CONTROL)
         modifiers |= MOD_CONTROL;
     if (flags & HOTKEYF_ALT)
@@ -804,9 +837,30 @@ UINT hotkeyModifiers(WORD value)
         modifiers |= MOD_SHIFT;
     return modifiers;
 }
-bool registerShortcuts(WORD area, WORD full, bool notify = true)
+WORD shortcutFromHotkey(LPARAM info)
 {
+    const UINT modifiers = LOWORD(info), key = HIWORD(info);
+    BYTE flags = 0;
+    if (modifiers & MOD_CONTROL)
+        flags |= HOTKEYF_CONTROL;
+    if (modifiers & MOD_ALT)
+        flags |= HOTKEYF_ALT;
+    if (modifiers & MOD_SHIFT)
+        flags |= HOTKEYF_SHIFT;
+    if (modifiers & MOD_WIN)
+        flags |= ShortcutWin;
+    if (HIBYTE(MapVirtualKeyW(key, MAPVK_VK_TO_VSC_EX)) == 0xE0)
+        flags |= HOTKEYF_EXT;
+    return MAKEWORD(static_cast<BYTE>(key), flags);
+}
+bool registerShortcuts(WORD area, WORD full, bool notify = true,
+                       std::wstring *failure = nullptr)
+{
+    if (failure)
+        failure->clear();
     auto reject = [&](const wchar_t *message) {
+        if (failure)
+            *failure = message;
         if (notify)
             MessageBoxW(app.settingsWindow ? app.settingsWindow : app.window, message,
                         L"Choose different shortcuts", MB_OK | MB_ICONINFORMATION);
@@ -815,9 +869,14 @@ bool registerShortcuts(WORD area, WORD full, bool notify = true)
     for (WORD value : {area, full})
     {
         BYTE key = LOBYTE(value), flags = HIBYTE(value);
-        if (key &&
-            ((!(flags & (HOTKEYF_CONTROL | HOTKEYF_ALT)) && key != VK_PAUSE) || key == VK_F12))
-            return reject(L"Use Ctrl or Alt, or Pause by itself. F12 is reserved by Windows.");
+        if (key == VK_F12)
+            return reject(L"F12 is reserved by Windows for the debugger. Choose another key.");
+        if (key == VK_DELETE && (flags & HOTKEYF_CONTROL) && (flags & HOTKEYF_ALT))
+            return reject(L"Ctrl+Alt+Delete is reserved by Windows. Choose another shortcut.");
+        if (key && (shortcutModifier(key) ||
+                    (flags & ~(HOTKEYF_CONTROL | HOTKEYF_ALT | HOTKEYF_SHIFT | HOTKEYF_EXT |
+                               ShortcutWin))))
+            return reject(L"Choose a key, optionally with Ctrl, Alt, Shift or Win.");
     }
     if (LOBYTE(area) && LOBYTE(full) && LOBYTE(area) == LOBYTE(full) &&
         hotkeyModifiers(area) == hotkeyModifiers(full))
@@ -848,8 +907,13 @@ bool registerShortcuts(WORD area, WORD full, bool notify = true)
             app.instantHotkeyRegistered =
                 RegisterHotKey(app.window, app.instantHotkeyId, hotkeyModifiers(app.instantHotkey),
                                LOBYTE(app.instantHotkey)) != FALSE;
-        return reject(
-            L"A shortcut is already in use or reserved by Windows. Choose another combination.");
+        const WORD unavailable = areaOK ? full : area;
+        const auto message = LOBYTE(unavailable) == VK_SNAPSHOT
+                                 ? L"Print Screen is unavailable. Check Windows Settings > "
+                                   L"Accessibility > Keyboard."
+                                 : hotkeyName(unavailable) +
+                                       L" is in use or reserved by Windows. Choose another shortcut.";
+        return reject(message.c_str());
     }
     app.hotkey = area;
     app.instantHotkey = full;
@@ -4194,7 +4258,7 @@ void openSettings()
     float d = app.dpi;
     RECT owner{};
     GetWindowRect(app.window, &owner);
-    int width = static_cast<int>(460 * d), height = static_cast<int>(330 * d);
+    int width = static_cast<int>(460 * d), height = static_cast<int>(350 * d);
     app.settingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SettingsClass, L"Keyboard shortcuts",
                                          WS_CAPTION | WS_SYSMENU,
                                          owner.left + (owner.right - owner.left - width) / 2,
@@ -5356,44 +5420,35 @@ void updateMenus()
     enable(Clear, !app.document.items.empty());
     CheckMenuItem(menu, Startup, MF_BYCOMMAND | (startupEnabled() ? MF_CHECKED : MF_UNCHECKED));
 }
+void settingsPanelShortcut(WORD shortcut)
+{
+    const WORD area = app.settingsRecording == SettingsAreaKey ? shortcut : app.hotkey;
+    const WORD all = app.settingsRecording == SettingsAllKey ? shortcut : app.instantHotkey;
+    if (registerShortcuts(area, all, false, &app.settingsError))
+    {
+        app.shortcutsDirty = true;
+        saveToolPreferencesOrNotify();
+        app.settingsRecording = 0;
+    }
+    buildButtons();
+    repaint();
+}
 void settingsPanelKey(WPARAM key, LPARAM info = 0)
 {
     if (app.settingsRecording)
     {
-        if (key == VK_ESCAPE)
+        const WORD shortcut = shortcutFromKey(key, info);
+        const bool modified = hotkeyModifiers(shortcut) != MOD_NOREPEAT;
+        if (key == VK_ESCAPE && !modified)
         {
             app.settingsRecording = 0;
             app.settingsError.clear();
         }
-        else if (key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU && key != VK_LWIN &&
-                 key != VK_RWIN)
+        else if (!shortcutModifier(key))
         {
-            WORD shortcut = 0;
-            if (key != VK_BACK && key != VK_DELETE)
-            {
-                BYTE flags = 0;
-                if (GetKeyState(VK_CONTROL) & 0x8000)
-                    flags |= HOTKEYF_CONTROL;
-                if (GetKeyState(VK_MENU) & 0x8000)
-                    flags |= HOTKEYF_ALT;
-                if (GetKeyState(VK_SHIFT) & 0x8000)
-                    flags |= HOTKEYF_SHIFT;
-                if (key != VK_PAUSE && (info & (1LL << 24)))
-                    flags |= HOTKEYF_EXT;
-                shortcut = MAKEWORD(static_cast<BYTE>(key), flags);
-            }
-            const WORD area = app.settingsRecording == SettingsAreaKey ? shortcut : app.hotkey;
-            const WORD all = app.settingsRecording == SettingsAllKey ? shortcut : app.instantHotkey;
-            if (registerShortcuts(area, all, false))
-            {
-                app.shortcutsDirty = true;
-                saveToolPreferencesOrNotify();
-                app.settingsRecording = 0;
-                app.settingsError.clear();
-            }
-            else
-                app.settingsError =
-                    L"Shortcut unavailable. Use Ctrl/Alt or Pause, and choose different keys.";
+            settingsPanelShortcut((key == VK_BACK || key == VK_DELETE) && !modified ? 0
+                                                                                  : shortcut);
+            return;
         }
         buildButtons();
         repaint();
@@ -5911,7 +5966,20 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         if (app.settingsPanelOpen)
             return 0;
         break;
+    case WM_SYSKEYUP:
+        // Some keyboards deliver Print Screen only on release.
+        if (wp == VK_SNAPSHOT && app.settingsPanelOpen && app.settingsRecording)
+        {
+            settingsPanelKey(wp, lp);
+            return 0;
+        }
+        break;
     case WM_KEYUP:
+        if (wp == VK_SNAPSHOT && app.settingsPanelOpen && app.settingsRecording)
+        {
+            settingsPanelKey(wp, lp);
+            return 0;
+        }
         if (wp == VK_SPACE)
         {
             app.spaceDown = false;
@@ -5933,7 +6001,17 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_HOTKEY:
-        if (!app.settingsWindow && !app.settingsRecording && !app.themePickerOpen)
+        // Registered shortcuts arrive here instead of as ordinary key messages.
+        // Allow selecting or swapping a shortcut that Tiger Snip already owns.
+        if (app.settingsRecording)
+            settingsPanelShortcut(shortcutFromHotkey(lp));
+        else if (app.settingsWindow)
+        {
+            const HWND field = GetFocus();
+            if (field == app.hotkeyControl || field == app.instantHotkeyControl)
+                SendMessageW(field, HKM_SETHOTKEY, shortcutFromHotkey(lp), 0);
+        }
+        else if (!app.themePickerOpen)
         {
             if (wp == static_cast<WPARAM>(app.hotkeyId))
                 startSnip(true);
@@ -6182,6 +6260,7 @@ LRESULT CALLBACK overlayProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
 LRESULT CALLBACK shortcutFieldProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp, UINT_PTR,
                                         DWORD_PTR value)
 {
+    constexpr DWORD_PTR PrintScreenDown = 1U << 16;
     return callbackBoundary<LRESULT>(
         [&]() -> LRESULT {
 #ifdef TIGER_SNIP_TESTING
@@ -6205,37 +6284,41 @@ LRESULT CALLBACK shortcutFieldProcedure(HWND hwnd, UINT message, WPARAM wp, LPAR
                 return 0;
             if (message == WM_GETDLGCODE)
                 return DefSubclassProc(hwnd, message, wp, lp) | DLGC_WANTALLKEYS;
-            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN ||
+                ((message == WM_KEYUP || message == WM_SYSKEYUP) && wp == VK_SNAPSHOT))
             {
-                if (wp == VK_TAB)
+                if ((message == WM_KEYUP || message == WM_SYSKEYUP) && (value & PrintScreenDown))
+                {
+                    // Preserve modifiers captured on key-down even if released first.
+                    if (!SetWindowSubclass(hwnd, shortcutFieldProcedure, 1, static_cast<WORD>(value)))
+                        throwWindowsError("Cannot update the shortcut control.");
+                    return 0;
+                }
+                const WORD shortcut = shortcutFromKey(wp, lp);
+                const bool modified = hotkeyModifiers(shortcut) != MOD_NOREPEAT;
+                if (wp == VK_TAB && !(HIBYTE(shortcut) &
+                                      (HOTKEYF_CONTROL | HOTKEYF_ALT | ShortcutWin)))
                 {
                     SetFocus(
                         GetNextDlgTabItem(GetParent(hwnd), hwnd, GetKeyState(VK_SHIFT) & 0x8000));
                     return 0;
                 }
-                if (wp == VK_RETURN || wp == VK_ESCAPE)
+                if ((wp == VK_RETURN || wp == VK_ESCAPE) && !modified)
                 {
                     SendMessageW(GetParent(hwnd), WM_COMMAND, wp == VK_RETURN ? IDOK : IDCANCEL, 0);
                     return 0;
                 }
-                if (wp == VK_BACK || wp == VK_DELETE)
+                if ((wp == VK_BACK || wp == VK_DELETE) && !modified)
                 {
                     SendMessageW(hwnd, HKM_SETHOTKEY, 0, 0);
                     return 0;
                 }
-                if (wp == VK_CONTROL || wp == VK_MENU || wp == VK_SHIFT || wp == VK_LWIN ||
-                    wp == VK_RWIN)
+                if (shortcutModifier(wp))
                     return 0;
-                BYTE modifiers = 0;
-                if (GetKeyState(VK_CONTROL) & 0x8000)
-                    modifiers |= HOTKEYF_CONTROL;
-                if (GetKeyState(VK_MENU) & 0x8000)
-                    modifiers |= HOTKEYF_ALT;
-                if (GetKeyState(VK_SHIFT) & 0x8000)
-                    modifiers |= HOTKEYF_SHIFT;
-                if (lp & (1LL << 24))
-                    modifiers |= HOTKEYF_EXT;
-                SendMessageW(hwnd, HKM_SETHOTKEY, MAKEWORD(static_cast<BYTE>(wp), modifiers), 0);
+                SendMessageW(hwnd, HKM_SETHOTKEY, shortcut, 0);
+                if (wp == VK_SNAPSHOT && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) &&
+                    !SetWindowSubclass(hwnd, shortcutFieldProcedure, 1, shortcut | PrintScreenDown))
+                    throwWindowsError("Cannot update the shortcut control.");
                 return 0;
             }
             if (message == WM_CHAR || message == WM_SYSCHAR)
@@ -6288,11 +6371,13 @@ LRESULT CALLBACK settingsProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
                 SendMessageW(app.instantHotkeyControl, HKM_SETRULES, 0, 0);
                 SendMessageW(app.instantHotkeyControl, HKM_SETHOTKEY, app.instantHotkey, 0);
                 control(L"STATIC",
-                        L"Use Ctrl or Alt, or Pause alone. Backspace disables.\nInstant capture "
-                        L"opens directly in the editor; use Crop.",
-                        0, 20, 170, 395, 44, 0);
-                control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 237, 246, 84, 30, IDOK);
-                control(L"BUTTON", L"Cancel", WS_TABSTOP, 331, 246, 84, 30, IDCANCEL);
+                        L"Use a single key or Ctrl/Alt/Shift/Win + key.\n"
+                        L"Global shortcuts override other apps. F12 is reserved.\n"
+                        L"Backspace disables. Print Screen may need the\n"
+                        L"Windows screen capture shortcut turned off.",
+                        0, 20, 170, 395, 84, 0);
+                control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 237, 266, 84, 30, IDOK);
+                control(L"BUTTON", L"Cancel", WS_TABSTOP, 331, 266, 84, 30, IDCANCEL);
                 return 0;
             }
             case WM_COMMAND:
@@ -7670,11 +7755,72 @@ void testCaptureShortcuts()
         !app.hotkeyRegistered || app.instantHotkeyRegistered || !registerShortcuts(0, 0, false))
         throw std::runtime_error("Disabling either capture shortcut independently failed.");
     if (!registerShortcuts(area, VK_PAUSE, false) || !app.instantHotkeyRegistered ||
-        hotkeyName(app.instantHotkey) != L"Pause" || registerShortcuts(area, 'P', false) ||
+        hotkeyName(app.instantHotkey) != L"Pause" ||
         registerShortcuts(area, VK_F12, false) || app.instantHotkey != VK_PAUSE ||
+        registerShortcuts(area, MAKEWORD(VK_DELETE, HOTKEYF_CONTROL | HOTKEYF_ALT), false) ||
         !registerShortcuts(0, 0, false))
         throw std::runtime_error(
-            "Standalone Pause shortcut or ordinary/reserved-key validation failed.");
+            "Standalone Pause shortcut or reserved-key validation failed.");
+    for (WORD key : {WORD(VK_F5), WORD(VK_PRIOR), WORD(VK_NEXT), WORD('P'), WORD(VK_SNAPSHOT)})
+    {
+        if (key == VK_SNAPSHOT)
+        {
+            // Windows allows an app to override its default Print Screen shortcut
+            // while that app is in the foreground.
+            ShowWindow(app.window, SW_SHOW);
+            SetForegroundWindow(app.window);
+            UpdateWindow(app.window);
+        }
+        std::wstring failure;
+        if (!registerShortcuts(key, 0, false, &failure))
+        {
+            // Print Screen can already belong to Windows screen capture on this PC.
+            if (key != VK_SNAPSHOT || failure.find(L"Accessibility") == std::wstring::npos)
+                throw std::runtime_error("Cannot register a standalone shortcut.");
+            continue;
+        }
+        MSG message{};
+        while (PeekMessageW(&message, app.window, WM_HOTKEY, WM_HOTKEY, PM_REMOVE))
+        {
+        }
+        INPUT input[3]{};
+        for (auto &event : input)
+        {
+            event.type = INPUT_KEYBOARD;
+            event.ki.wVk = key;
+            if (key == VK_PRIOR || key == VK_NEXT || key == VK_SNAPSHOT)
+                event.ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+        }
+        input[2].ki.dwFlags |= KEYEVENTF_KEYUP;
+        if (SendInput(3, input, sizeof(INPUT)) != 3)
+            throw std::runtime_error("Cannot inject standalone shortcut input.");
+        int delivered = 0;
+        const auto deadline = GetTickCount64() + 200;
+        while (GetTickCount64() < deadline)
+        {
+            if (PeekMessageW(&message, app.window, WM_HOTKEY, WM_HOTKEY, PM_REMOVE))
+            {
+                if (message.wParam == static_cast<WPARAM>(app.hotkeyId) &&
+                    HIWORD(message.lParam) == key)
+                    ++delivered;
+            }
+            else
+                MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        if (delivered != 1)
+            throw std::runtime_error("Standalone shortcut delivery or repeat suppression failed: " +
+                                     std::to_string(key) + ", count=" + std::to_string(delivered));
+    }
+    if (!registerShortcuts(MAKEWORD(VK_F20, HOTKEYF_SHIFT), 0, false))
+        throw std::runtime_error("Shift-only shortcut registration failed.");
+    if (!registerShortcuts(MAKEWORD(VK_F20, HOTKEYF_SHIFT),
+                           MAKEWORD(VK_F5, ShortcutWin | HOTKEYF_CONTROL), false))
+        throw std::runtime_error("Windows modifier shortcut registration failed.");
+    if (hotkeyName(app.instantHotkey) != L"Win+Ctrl+F5")
+        throw std::runtime_error("Windows modifier shortcut label failed: " +
+                                 std::to_string(app.instantHotkey));
+    if (!registerShortcuts(0, 0, false))
+        throw std::runtime_error("Windows modifier shortcut cleanup failed.");
 }
 void testShortcutFields()
 {
@@ -7691,6 +7837,19 @@ void testShortcutFields()
     processKey(VK_PAUSE);
     if (app.settingsRecording || app.hotkey != VK_PAUSE || !app.hotkeyRegistered)
         throw std::runtime_error("Modern Settings did not register Pause.");
+    for (WORD key : {WORD(VK_F5), WORD(VK_PRIOR), WORD(VK_NEXT)})
+    {
+        command(SettingsAreaKey);
+        SendMessageW(app.window, WM_KEYDOWN, key, key == VK_F5 ? 0 : 1LL << 24);
+        if (app.settingsRecording || LOBYTE(app.hotkey) != key || !app.hotkeyRegistered)
+            throw std::runtime_error("Modern Settings rejected a standalone shortcut.");
+    }
+    command(SettingsAreaKey);
+    SendMessageW(app.window, WM_HOTKEY, app.hotkeyId, MAKELPARAM(0, VK_NEXT));
+    if (app.settingsRecording || LOBYTE(app.hotkey) != VK_NEXT || app.overlay)
+        throw std::runtime_error("Recording an already registered shortcut started a capture.");
+    command(SettingsAreaKey);
+    processKey(VK_PAUSE);
     command(SettingsAllKey);
     processKey(VK_PAUSE);
     if (!app.settingsRecording || app.settingsError.empty() || app.instantHotkey != priorAll ||
@@ -7699,6 +7858,27 @@ void testShortcutFields()
     processKey(VK_BACK);
     if (app.settingsRecording || app.instantHotkey || app.instantHotkeyRegistered)
         throw std::runtime_error("Modern Settings did not disable a shortcut.");
+    command(SettingsAreaKey);
+    keyboard[VK_CONTROL] = keyboard[VK_LWIN] = 0x80;
+    SetKeyboardState(keyboard);
+    processKey(VK_F5);
+    if (app.settingsRecording || app.hotkey != MAKEWORD(VK_F5, HOTKEYF_CONTROL | ShortcutWin) ||
+        preferenceUInt(app.iniPath, L"Settings", L"Hotkey", 0) != app.hotkey)
+        throw std::runtime_error("Modern Settings did not save Windows modifier shortcut.");
+    keyboard[VK_CONTROL] = keyboard[VK_LWIN] = 0;
+    SetKeyboardState(keyboard);
+    command(SettingsAreaKey);
+    SendMessageW(app.window, WM_KEYUP, VK_SNAPSHOT, 1LL << 24);
+    if (app.settingsRecording)
+    {
+        if (app.settingsError.find(L"Accessibility") == std::wstring::npos ||
+            app.hotkey != MAKEWORD(VK_F5, HOTKEYF_CONTROL | ShortcutWin))
+            throw std::runtime_error("Print Screen conflict lost the previous shortcut.");
+        processKey(VK_ESCAPE);
+    }
+    else if (app.hotkey != MAKEWORD(VK_SNAPSHOT, HOTKEYF_EXT) ||
+             preferenceUInt(app.iniPath, L"Settings", L"Hotkey", 0) != app.hotkey)
+        throw std::runtime_error("Modern Settings did not save Print Screen key-up shortcut.");
     command(SettingsAreaKey);
     keyboard[VK_CONTROL] = 0x80;
     SetKeyboardState(keyboard);
@@ -7725,6 +7905,30 @@ void testShortcutFields()
             throw std::runtime_error("Shortcut field label does not match its stored key.");
     };
     expectLabel(app.instantHotkey);
+    SendMessageW(app.instantHotkeyControl, WM_KEYUP, VK_SNAPSHOT, (1LL << 24) | 1);
+    expectLabel(MAKEWORD(VK_SNAPSHOT, HOTKEYF_EXT));
+    for (WORD key : {WORD(VK_F5), WORD(VK_PRIOR), WORD(VK_NEXT)})
+    {
+        SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, key, key == VK_F5 ? 0 : 1LL << 24);
+        expectLabel(key == VK_F5 ? key : MAKEWORD(key, HOTKEYF_EXT));
+    }
+    keyboard[VK_LWIN] = 0x80;
+    keyboard[VK_SHIFT] = 0x80;
+    keyboard[VK_CONTROL] = 0;
+    SetKeyboardState(keyboard);
+    SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, VK_F5, 0);
+    expectLabel(MAKEWORD(VK_F5, ShortcutWin | HOTKEYF_SHIFT));
+    keyboard[VK_LWIN] = keyboard[VK_SHIFT] = keyboard[VK_CONTROL] = 0;
+    SetKeyboardState(keyboard);
+    keyboard[VK_CONTROL] = 0x80;
+    SetKeyboardState(keyboard);
+    SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, VK_SNAPSHOT, 1LL << 24);
+    keyboard[VK_CONTROL] = 0;
+    SetKeyboardState(keyboard);
+    SendMessageW(app.instantHotkeyControl, WM_KEYUP, VK_SNAPSHOT, 1LL << 24);
+    expectLabel(MAKEWORD(VK_SNAPSHOT, HOTKEYF_CONTROL | HOTKEYF_EXT));
+    SendMessageW(app.instantHotkeyControl, WM_KEYUP, VK_SNAPSHOT, 1LL << 24);
+    expectLabel(MAKEWORD(VK_SNAPSHOT, HOTKEYF_EXT));
     SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, VK_HOME, (1LL << 24) | (0x47 << 16) | 1);
     expectLabel(MAKEWORD(VK_HOME, HOTKEYF_EXT));
     SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, VK_PAUSE, (0x45 << 16) | 1);
@@ -7733,6 +7937,7 @@ void testShortcutFields()
     expectLabel(0);
     SendMessageW(app.instantHotkeyControl, WM_KEYDOWN, VK_PAUSE, (0x45 << 16) | 1);
     expectLabel(VK_PAUSE);
+    SetKeyboardState(previousKeyboard);
     saveBytes(L"shortcut-test-pause.png", app.graphics.png(renderNativeWindow(app.settingsWindow)));
     closeSettings();
     openSettings();
@@ -8663,8 +8868,11 @@ int applicationMain(HINSTANCE instance, int show)
             {
                 testShortcutFields();
                 writeTestReport(L"shortcut-test-results.txt",
-                                "PASS: visible shortcut labels, restored binding, Home/Pause key "
-                                "entry, Backspace, Pause key, "
+                                "PASS: F5/Page Up/Page Down/letter global delivery without repeats; "
+                                "Print Screen delivery or actionable Windows conflict; Shift/Win "
+                                "modifiers, reserved keys, duplicate/conflict rollback; both settings "
+                                "interfaces, Print Screen key-up entry, recording existing bindings, "
+                                "visible labels, Backspace, Pause, "
                                 "Cancel, Save, real Windows hotkey delivery, instant capture and "
                                 "reopened settings.\n");
                 command(Exit);

@@ -48,14 +48,19 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
             D2D1::RoundedRect({r.left, r.top, r.right, r.bottom}, radius, radius), brush);
     };
     auto text = [&](const std::wstring &s, Rect r, Color fg, bool small = false,
-                    bool centered = false) {
+                    bool centered = false, bool wrap = false) {
         auto font = small ? app.graphics.smallFont.get() : app.graphics.font.get();
         font->SetTextAlignment(centered ? DWRITE_TEXT_ALIGNMENT_CENTER
                                         : DWRITE_TEXT_ALIGNMENT_LEADING);
         font->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const auto wrapping = font->GetWordWrapping();
+        if (wrap)
+            font->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         brush->SetColor(color(fg));
         rt->DrawText(s.c_str(), static_cast<UINT32>(s.size()), font,
                      {r.left, r.top, r.right, r.bottom}, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if (wrap)
+            font->SetWordWrapping(wrapping);
     };
     brush->SetColor(color(rgb(0, 0, 0), app.darkTheme ? .46f : .16f));
     rt->FillRectangle({0, 0, c.right, c.bottom}, brush);
@@ -74,7 +79,7 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
          uiBorder());
     text(app.settingsError.empty() ? L"Changes are saved automatically." : app.settingsError,
          {l.panel.left + 24, l.panel.bottom - 45, l.panel.right - 124, l.panel.bottom - 13},
-         app.settingsError.empty() ? Muted : Ink, true);
+         app.settingsError.empty() ? Muted : Ink, true, false, true);
     for (const auto &control : l.controls)
     {
         const auto r = control.rect;
@@ -105,7 +110,7 @@ void paintSettingsPanel(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
                  app.settingsPage == 3 && !control.command && control.kind == SettingsControlKind::Text
                      ? Muted : Ink);
             if (!control.detail.empty())
-                text(control.detail, {r.left, r.top + 30, r.right, r.bottom}, Muted, true);
+                text(control.detail, {r.left, r.top + 30, r.right, r.bottom}, Muted, true, false, true);
         }
         else
         {
