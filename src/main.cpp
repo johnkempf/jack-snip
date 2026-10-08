@@ -5,6 +5,8 @@
 #include "test_hooks.h"
 #include "capture.h"
 #include "clipboard.h"
+#include "ocr.h"
+#include "text_notice.h"
 #include "file_io.h"
 #include "test_reports.h"
 #include <windowsx.h>
@@ -23,6 +25,8 @@
 #include <chrono>
 #include <sstream>
 #include <random>
+#include <future>
+#include <thread>
 
 using namespace snip;
 namespace
@@ -32,7 +36,7 @@ constexpr wchar_t MainClass[] = L"TigerSnip.Main.1", OverlayClass[] = L"TigerSni
                   DiagnosticClass[] = L"TigerSnip.ResizeDiagnostic.1";
 constexpr UINT TrayMessage = WM_APP + 20, LaunchMessage = WM_APP + 21;
 constexpr UINT CaptureTimer = 1, StatusTimer = 2, SmokeTimer = 3, CopyFlashTimer = 4,
-               SizeRepeatTimer = 5, TraceHeartbeatTimer = 6;
+               SizeRepeatTimer = 5, TraceHeartbeatTimer = 6, TextRecognitionTimer = 7;
 constexpr UINT SizeRepeatDelay = 300, SizeRepeatInterval = 35;
 constexpr ULONGLONG CopyPulseDuration = 500, CopyNoticeDuration = 1400;
 constexpr float StatusHeight = 32;
@@ -115,6 +119,9 @@ enum Command
     Preferences,
     WelcomeCapture,
     ToggleFit,
+    TextSnip,
+    CopySnipText,
+    SettingsTextKey,
     SettingsPageFirst = 2100,
     SettingsPageLast = SettingsPageFirst + 6,
     ColorFirst = PaletteFirst,
@@ -207,7 +214,7 @@ struct Application
     unsigned resizeTestPaints = 0;
     HINSTANCE instance = nullptr;
     HWND window = nullptr, overlay = nullptr, settingsWindow = nullptr, hotkeyControl = nullptr,
-         instantHotkeyControl = nullptr, tooltip = nullptr;
+         instantHotkeyControl = nullptr, textHotkeyControl = nullptr, tooltip = nullptr;
     HDC overlayDC = nullptr;
     HBITMAP overlaySurface = nullptr;
     HGDIOBJ overlayPrevious = nullptr;
@@ -272,6 +279,18 @@ struct Application
     bool fit = true, dirty = false, capturePending = false, exiting = false, tray = false,
          spaceDown = false;
     bool selecting = false, changed = false, smoke = false;
+    bool textCapture = false, textEditorWasVisible = false;
+    HWND textReturnWindow = nullptr;
+    POINT textNoticePoint{};
+    DWORD textClipboardSequence = 0;
+    TextNotice textNotice;
+    struct TextResult
+    {
+        std::wstring text;
+        std::string error;
+    };
+    std::future<TextResult> textResult;
+    std::jthread textWorker;
     bool toolPreferencesDirty = false, shortcutsDirty = false, rendererPreferencesDirty = false;
     std::string preferenceError;
     bool autoCopy = true;
@@ -312,10 +331,13 @@ struct Application
     size_t welcomeMessage = WelcomeMessages.size();
     WORD hotkey = MAKEWORD('S', HOTKEYF_CONTROL | HOTKEYF_ALT);
     WORD instantHotkey = MAKEWORD('F', HOTKEYF_CONTROL | HOTKEYF_ALT);
+    WORD textHotkey = MAKEWORD('T', HOTKEYF_CONTROL | HOTKEYF_ALT);
     int hotkeyId = 1;
     int instantHotkeyId = 3;
+    int textHotkeyId = 5;
     bool hotkeyRegistered = false;
     bool instantHotkeyRegistered = false;
+    bool textHotkeyRegistered = false;
     std::vector<Button> buttons;
     int hover = 0, pressed = 0;
     int sizeRepeatCommand = 0;
@@ -381,7 +403,8 @@ LRESULT CALLBACK settingsProcedure(HWND, UINT, WPARAM, LPARAM);
 void command(int id, bool editSelectedStyle = false);
 void stopSizeRepeat();
 void finishDrag(bool cancel);
-void startSnip(bool instant = false, bool allMonitors = false);
+void startSnip(bool instant = false, bool allMonitors = false, bool textCapture = false);
+void copySnipText();
 void hideEditorForCapture();
 void openOverlay();
 void refreshEditorCursor();
@@ -725,6 +748,7 @@ bool saveToolPreferences()
         {
             setting(L"Settings", L"Hotkey", app.hotkey);
             setting(L"Settings", L"InstantHotkey", app.instantHotkey);
+            setting(L"Settings", L"TextHotkey", app.textHotkey);
         }
         if (app.toolPreferencesDirty)
         {
@@ -853,8 +877,8 @@ WORD shortcutFromHotkey(LPARAM info)
         flags |= HOTKEYF_EXT;
     return MAKEWORD(static_cast<BYTE>(key), flags);
 }
-bool registerShortcuts(WORD area, WORD full, bool notify = true,
-                       std::wstring *failure = nullptr)
+bool registerShortcuts(WORD area, WORD full, bool notify = true, std::wstring *failure = nullptr,
+                       WORD text = app.textHotkey)
 {
     if (failure)
         failure->clear();
@@ -866,7 +890,8 @@ bool registerShortcuts(WORD area, WORD full, bool notify = true,
                         L"Choose different shortcuts", MB_OK | MB_ICONINFORMATION);
         return false;
     };
-    for (WORD value : {area, full})
+    const std::array<WORD, 3> values{area, full, text};
+    for (WORD value : values)
     {
         BYTE key = LOBYTE(value), flags = HIBYTE(value);
         if (key == VK_F12)
@@ -878,36 +903,38 @@ bool registerShortcuts(WORD area, WORD full, bool notify = true,
                                ShortcutWin))))
             return reject(L"Choose a key, optionally with Ctrl, Alt, Shift or Win.");
     }
-    if (LOBYTE(area) && LOBYTE(full) && LOBYTE(area) == LOBYTE(full) &&
-        hotkeyModifiers(area) == hotkeyModifiers(full))
-        return reject(L"Area selection and instant capture need different shortcuts.");
-
-    // Release both before registering so the user can swap the two combinations.
-    // Roll back both on failure, leaving the previous settings working.
-    if (app.hotkeyRegistered)
-        UnregisterHotKey(app.window, app.hotkeyId);
-    if (app.instantHotkeyRegistered)
-        UnregisterHotKey(app.window, app.instantHotkeyId);
-    const int areaId = app.hotkeyId == 1 ? 2 : 1;
-    const int fullId = app.instantHotkeyId == 3 ? 4 : 3;
-    const bool areaOK =
-        !LOBYTE(area) || RegisterHotKey(app.window, areaId, hotkeyModifiers(area), LOBYTE(area));
-    const bool fullOK =
-        areaOK &&
-        (!LOBYTE(full) || RegisterHotKey(app.window, fullId, hotkeyModifiers(full), LOBYTE(full)));
-    if (!fullOK)
+    for (size_t i = 0; i < values.size(); ++i)
+        for (size_t j = i + 1; j < values.size(); ++j)
+            if (LOBYTE(values[i]) && LOBYTE(values[i]) == LOBYTE(values[j]) &&
+                hotkeyModifiers(values[i]) == hotkeyModifiers(values[j]))
+                return reject(L"Area, all monitors and text capture need different shortcuts.");
+    const std::array<WORD, 3> previous{app.hotkey, app.instantHotkey, app.textHotkey};
+    const std::array<int, 3> oldIds{app.hotkeyId, app.instantHotkeyId, app.textHotkeyId};
+    const std::array<bool, 3> registered{app.hotkeyRegistered, app.instantHotkeyRegistered,
+                                         app.textHotkeyRegistered};
+    const std::array<int, 3> ids{app.hotkeyId == 1 ? 2 : 1, app.instantHotkeyId == 3 ? 4 : 3,
+                                 app.textHotkeyId == 5 ? 6 : 5};
+    for (size_t i = 0; i < values.size(); ++i)
+        if (registered[i])
+            UnregisterHotKey(app.window, oldIds[i]);
+    size_t accepted = 0;
+    for (; accepted < values.size(); ++accepted)
+        if (LOBYTE(values[accepted]) &&
+            !RegisterHotKey(app.window, ids[accepted], hotkeyModifiers(values[accepted]),
+                            LOBYTE(values[accepted])))
+            break;
+    if (accepted != values.size())
     {
-        if (areaOK && LOBYTE(area))
-            UnregisterHotKey(app.window, areaId);
-        if (app.hotkeyRegistered)
-            app.hotkeyRegistered =
-                RegisterHotKey(app.window, app.hotkeyId, hotkeyModifiers(app.hotkey),
-                               LOBYTE(app.hotkey)) != FALSE;
-        if (app.instantHotkeyRegistered)
-            app.instantHotkeyRegistered =
-                RegisterHotKey(app.window, app.instantHotkeyId, hotkeyModifiers(app.instantHotkey),
-                               LOBYTE(app.instantHotkey)) != FALSE;
-        const WORD unavailable = areaOK ? full : area;
+        for (size_t i = 0; i < accepted; ++i)
+            if (LOBYTE(values[i]))
+                UnregisterHotKey(app.window, ids[i]);
+        std::array<bool *, 3> state{&app.hotkeyRegistered, &app.instantHotkeyRegistered,
+                                    &app.textHotkeyRegistered};
+        for (size_t i = 0; i < values.size(); ++i)
+            *state[i] =
+                registered[i] && RegisterHotKey(app.window, oldIds[i], hotkeyModifiers(previous[i]),
+                                                LOBYTE(previous[i]));
+        const WORD unavailable = values[accepted];
         const auto message = LOBYTE(unavailable) == VK_SNAPSHOT
                                  ? L"Print Screen is unavailable. Check Windows Settings > "
                                    L"Accessibility > Keyboard."
@@ -917,10 +944,13 @@ bool registerShortcuts(WORD area, WORD full, bool notify = true,
     }
     app.hotkey = area;
     app.instantHotkey = full;
-    app.hotkeyId = areaId;
-    app.instantHotkeyId = fullId;
+    app.textHotkey = text;
+    app.hotkeyId = ids[0];
+    app.instantHotkeyId = ids[1];
+    app.textHotkeyId = ids[2];
     app.hotkeyRegistered = LOBYTE(area) != 0;
     app.instantHotkeyRegistered = LOBYTE(full) != 0;
+    app.textHotkeyRegistered = LOBYTE(text) != 0;
     return true;
 }
 bool startupEnabled()
@@ -2188,8 +2218,10 @@ bool enabled(int id)
                       app.document.items[app.document.selected].a) >= .01f;
     if (id == Undo || id == Redo)
         return hasImage() && (id == Undo ? app.document.canUndo() : app.document.canRedo());
-    if (id == NewSnip || id == WelcomeCapture || id == InstantSnip)
-        return !app.capturePending && !app.overlay;
+    if (id == NewSnip || id == WelcomeCapture || id == InstantSnip || id == TextSnip)
+        return !app.capturePending && !app.overlay && !app.textResult.valid();
+    if (id == CopySnipText)
+        return hasImage() && !app.textResult.valid();
     if (id == Copy || id == Save || id == SaveAs || id == Fit || id == ToggleFit || id == Actual || id == Eyedropper ||
         id == CropTool || id == TextTool || id == HighlightTool || id == EraserTool ||
         id == RectangleTool || id == TextBold || id == TextBox || id == TextSizeMenu ||
@@ -4242,6 +4274,7 @@ void closeSettings()
         app.settingsWindow = nullptr;
         app.hotkeyControl = nullptr;
         app.instantHotkeyControl = nullptr;
+        app.textHotkeyControl = nullptr;
         EnableWindow(app.window, TRUE);
         DestroyWindow(window);
         SetForegroundWindow(app.window);
@@ -4258,7 +4291,7 @@ void openSettings()
     float d = app.dpi;
     RECT owner{};
     GetWindowRect(app.window, &owner);
-    int width = static_cast<int>(460 * d), height = static_cast<int>(350 * d);
+    int width = static_cast<int>(460 * d), height = static_cast<int>(430 * d);
     app.settingsWindow = CreateWindowExW(WS_EX_DLGMODALFRAME, SettingsClass, L"Keyboard shortcuts",
                                          WS_CAPTION | WS_SYSMENU,
                                          owner.left + (owner.right - owner.left - width) / 2,
@@ -4275,6 +4308,7 @@ void trayMenu()
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, NewSnip, L"Snip now");
     AppendMenuW(menu, MF_STRING, InstantSnip, L"Capture all monitors now");
+    AppendMenuW(menu, MF_STRING, TextSnip, L"Copy text from an area");
     AppendMenuW(menu, MF_STRING, ShowEditor, L"Open editor");
     AppendMenuW(menu, MF_STRING, Preferences, L"Settings...");
     AppendMenuW(menu, MF_STRING, Settings, L"Keyboard shortcuts...");
@@ -4663,6 +4697,7 @@ void command(int id, bool editSelectedStyle)
         break;
     case SettingsAreaKey:
     case SettingsAllKey:
+    case SettingsTextKey:
         app.settingsRecording = id;
         app.settingsError.clear();
         buildButtons();
@@ -4712,6 +4747,7 @@ void command(int id, bool editSelectedStyle)
             break;
         AppendMenuW(menu, MF_STRING, NewSnip, L"Capture an area");
         AppendMenuW(menu, MF_STRING, InstantSnip, L"Capture all monitors now");
+        AppendMenuW(menu, MF_STRING, TextSnip, L"Copy text from an area");
         POINT anchor{static_cast<LONG>(20 * app.dpi), static_cast<LONG>(54 * app.dpi)};
         ClientToScreen(app.window, &anchor);
         const int choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, anchor.x, anchor.y,
@@ -4823,6 +4859,12 @@ void command(int id, bool editSelectedStyle)
         break;
     case Copy:
         copyImage();
+        break;
+    case TextSnip:
+        startSnip(true, false, true);
+        break;
+    case CopySnipText:
+        copySnipText();
         break;
     case AutoCopy:
         commitPreferences(app.iniPath, {{L"Settings", L"AutoCopy", app.autoCopy ? L"0" : L"1"}});
@@ -5029,6 +5071,7 @@ void command(int id, bool editSelectedStyle)
 }
 void cancelCapture(bool restore = true)
 {
+    const bool wasText = std::exchange(app.textCapture, false);
     if (app.window)
         KillTimer(app.window, CaptureTimer);
     if (app.overlay)
@@ -5050,8 +5093,110 @@ void cancelCapture(bool restore = true)
     app.dimDesktop = {};
     app.selecting = false;
     app.capturePending = false;
-    if (restore)
+    if (wasText)
+    {
+        if (app.textEditorWasVisible)
+        {
+            const BOOL uncloaked = FALSE;
+            DwmSetWindowAttribute(app.window, DWMWA_CLOAK, &uncloaked, sizeof(uncloaked));
+            ShowWindow(app.window, SW_SHOWNOACTIVATE);
+        }
+        if (IsWindow(app.textReturnWindow))
+            SetForegroundWindow(app.textReturnWindow);
+    }
+    else if (restore)
         showEditor();
+}
+void completeTextRecognition()
+{
+    if (!app.textResult.valid() ||
+        app.textResult.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return;
+    KillTimer(app.window, TextRecognitionTimer);
+    auto result = app.textResult.get();
+    app.textWorker.join();
+    std::wstring title, preview;
+    if (!result.error.empty())
+    {
+        title = L"Could not copy text";
+        preview.assign(result.error.begin(), result.error.end());
+    }
+    else if (result.text.find_first_not_of(L" \t\r\n") == std::wstring::npos)
+    {
+        title = L"No text found";
+        preview = L"Include all the letters in your selection, or zoom in. Your clipboard was kept.";
+    }
+    else if (GetClipboardSequenceNumber() != app.textClipboardSequence)
+    {
+        title = L"Clipboard changed";
+        preview = L"Another copy happened while reading text. Try the text snip again.";
+    }
+    else
+    {
+        ClipboardFailure failure;
+        if (copyText(app.window, result.text, &failure))
+        {
+            title = L"Text copied";
+            preview = std::move(result.text);
+        }
+        else
+        {
+            title = L"Could not copy text";
+            preview = failure.unavailable ? L"Clipboard is busy. Try the text snip again."
+                                          : L"Windows could not update the clipboard. Try again.";
+        }
+    }
+    app.textNotice.show(title, preview, app.textNoticePoint, app.darkTheme, uiAccentText());
+}
+void beginTextRecognition(Bitmap image)
+{
+    // One job at a time prevents an older recognition result replacing a newer copy.
+    if (app.textResult.valid())
+        return;
+    app.textClipboardSequence = GetClipboardSequenceNumber();
+    app.textNotice.show(L"Reading text\u2026", L"", app.textNoticePoint, app.darkTheme, uiAccentText(),
+                        true);
+    std::promise<Application::TextResult> promise;
+    app.textResult = promise.get_future();
+    try
+    {
+        app.textWorker = std::jthread(
+            [image = std::move(image), promise = std::move(promise)](std::stop_token stop) mutable {
+                Application::TextResult result;
+                try
+                {
+                    result.text = recognizeText(image, stop);
+                }
+                catch (const std::exception &failure)
+                {
+                    result.error = failure.what();
+                }
+                catch (...)
+                {
+                    result.error = "Windows could not recognize this text.";
+                }
+                promise.set_value(std::move(result));
+            });
+        if (!SetTimer(app.window, TextRecognitionTimer, 50, nullptr))
+            throwWindowsError("Cannot monitor text recognition.");
+    }
+    catch (...)
+    {
+        app.textWorker.request_stop();
+        if (app.textWorker.joinable())
+            app.textWorker.join();
+        app.textResult = {};
+        app.textNotice.close();
+        throw;
+    }
+}
+void copySnipText()
+{
+    if (!hasImage() || app.textResult.valid())
+        return;
+    GetCursorPos(&app.textNoticePoint);
+    // Read the original screenshot rather than drawn labels or export decorations.
+    beginTextRecognition(app.image);
 }
 void cloakEditorForCapture()
 {
@@ -5110,10 +5255,18 @@ void acceptCapture(Bitmap captured)
         }
     }
 }
-void startSnip(bool instant, bool allMonitors)
+void startSnip(bool instant, bool allMonitors, bool textCapture)
 {
-    if (app.overlay || app.capturePending || app.settingsWindow || app.themePickerOpen)
+    if (app.overlay || app.capturePending || app.settingsWindow || app.themePickerOpen ||
+        app.textResult.valid())
         return;
+    app.textNotice.close();
+    app.textCapture = textCapture;
+    if (textCapture)
+    {
+        app.textReturnWindow = GetForegroundWindow();
+        app.textEditorWasVisible = IsWindowVisible(app.window) != FALSE;
+    }
     closeSettingsPanel();
     closeRecent();
     // Reserve the request so repeated snips cannot replace an in-progress capture.
@@ -5211,6 +5364,13 @@ void finishCapture()
     }
     Bitmap captured =
         app.desktop.crop(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    if (app.textCapture)
+    {
+        app.textNoticePoint = {app.virtualX + rect.right, app.virtualY + rect.bottom};
+        cancelCapture(false);
+        beginTextRecognition(std::move(captured));
+        return;
+    }
     acceptCapture(std::move(captured));
 }
 void paintOverlay(HWND hwnd)
@@ -5252,8 +5412,10 @@ void paintOverlay(HWND hwnd)
         SelectObject(memory, oldBrush);
         DeleteObject(pen);
         wchar_t label[100]{};
-        swprintf_s(label, L"%ld x %ld   |   Esc to cancel", static_cast<long>(width),
-                   static_cast<long>(height));
+        swprintf_s(label,
+                   app.textCapture ? L"Copy text: %ld x %ld | Esc to cancel"
+                                   : L"%ld x %ld   |   Esc to cancel",
+                   static_cast<long>(width), static_cast<long>(height));
         int lx = std::clamp(static_cast<int>(r.left), 8, std::max(8, app.desktop.width - 300)),
             ly = r.top >= 35 ? static_cast<int>(r.top) - 32
                              : std::min(static_cast<int>(r.bottom) + 8, app.desktop.height - 30);
@@ -5280,8 +5442,10 @@ void paintOverlay(HWND hwnd)
         SetBkMode(memory, TRANSPARENT);
         SetTextColor(memory, RGB(255, 255, 255));
         SelectObject(memory, GetStockObject(DEFAULT_GUI_FONT));
-        DrawTextW(memory, L"Drag to select an area   |   Esc to cancel", -1, &box,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(memory,
+                  app.textCapture ? L"Copy text: drag to select | Esc to cancel"
+                                  : L"Drag to select an area   |   Esc to cancel",
+                  -1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
     BitBlt(dc, paint.rcPaint.left, paint.rcPaint.top, paint.rcPaint.right - paint.rcPaint.left,
            paint.rcPaint.bottom - paint.rcPaint.top, memory, paint.rcPaint.left, paint.rcPaint.top,
@@ -5294,7 +5458,9 @@ HMENU createMenu()
           view = CreatePopupMenu(), settings = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuW(file, MF_STRING, NewSnip, L"&New snip\tCtrl+N");
     AppendMenuW(file, MF_STRING, InstantSnip, L"Capture &all monitors now");
+    AppendMenuW(file, MF_STRING, TextSnip, L"Capture &text");
     AppendMenuW(file, MF_STRING, Copy, L"&Copy image\tCtrl+C");
+    AppendMenuW(file, MF_STRING, CopySnipText, L"Copy text from snip");
     AppendMenuW(file, MF_STRING, Save, L"&Save PNG\tCtrl+S");
     AppendMenuW(file, MF_STRING, SaveAs, L"Save &As...\tCtrl+Shift+S");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
@@ -5410,7 +5576,7 @@ void updateMenus()
     auto enable = [&](int id, bool yes) {
         EnableMenuItem(menu, id, MF_BYCOMMAND | (yes ? MF_ENABLED : MF_GRAYED));
     };
-    for (int id : {Copy, Save, SaveAs, Fit, Actual, CropTool, EraserTool})
+    for (int id : {Copy, Save, SaveAs, Fit, Actual, CropTool, EraserTool, CopySnipText})
         enable(id, hasImage());
     CheckMenuItem(menu, EraserTool, MF_BYCOMMAND | (app.erasing ? MF_CHECKED : MF_UNCHECKED));
     enable(Undo, app.document.canUndo());
@@ -5424,7 +5590,8 @@ void settingsPanelShortcut(WORD shortcut)
 {
     const WORD area = app.settingsRecording == SettingsAreaKey ? shortcut : app.hotkey;
     const WORD all = app.settingsRecording == SettingsAllKey ? shortcut : app.instantHotkey;
-    if (registerShortcuts(area, all, false, &app.settingsError))
+    const WORD text = app.settingsRecording == SettingsTextKey ? shortcut : app.textHotkey;
+    if (registerShortcuts(area, all, false, &app.settingsError, text))
     {
         app.shortcutsDirty = true;
         saveToolPreferencesOrNotify();
@@ -6008,7 +6175,8 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         else if (app.settingsWindow)
         {
             const HWND field = GetFocus();
-            if (field == app.hotkeyControl || field == app.instantHotkeyControl)
+            if (field == app.hotkeyControl || field == app.instantHotkeyControl ||
+                field == app.textHotkeyControl)
                 SendMessageW(field, HKM_SETHOTKEY, shortcutFromHotkey(lp), 0);
         }
         else if (!app.themePickerOpen)
@@ -6017,6 +6185,8 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
                 startSnip(true);
             else if (wp == static_cast<WPARAM>(app.instantHotkeyId))
                 startSnip(true, true);
+            else if (wp == static_cast<WPARAM>(app.textHotkeyId))
+                startSnip(true, false, true);
         }
         return 0;
     case TrayMessage:
@@ -6032,7 +6202,9 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
             showEditor();
         return 0;
     case WM_TIMER:
-        if (wp == SizeRepeatTimer)
+        if (wp == TextRecognitionTimer)
+            completeTextRecognition();
+        else if (wp == SizeRepeatTimer)
             repeatSize();
         else if (wp == CaptureTimer)
         {
@@ -6135,11 +6307,19 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         }
         saveToolPreferences();
         cancelCapture(false);
+        KillTimer(hwnd, TextRecognitionTimer);
+        app.textWorker.request_stop();
+        if (app.textWorker.joinable())
+            app.textWorker.join();
+        app.textResult = {};
+        app.textNotice.close();
         removeTray();
         if (app.hotkeyRegistered)
             UnregisterHotKey(hwnd, app.hotkeyId);
         if (app.instantHotkeyRegistered)
             UnregisterHotKey(hwnd, app.instantHotkeyId);
+        if (app.textHotkeyRegistered)
+            UnregisterHotKey(hwnd, app.textHotkeyId);
         if (app.settingsWindow)
             closeSettings();
         PostQuitMessage(0);
@@ -6370,14 +6550,21 @@ LRESULT CALLBACK settingsProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
                     throwWindowsError("Cannot initialize the instant shortcut control.");
                 SendMessageW(app.instantHotkeyControl, HKM_SETRULES, 0, 0);
                 SendMessageW(app.instantHotkeyControl, HKM_SETHOTKEY, app.instantHotkey, 0);
+                control(L"STATIC", L"Copy text from an area:", 0, 20, 168, 395, 24, 0);
+                app.textHotkeyControl =
+                    control(L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_READONLY | ES_AUTOHSCROLL, 20,
+                            198, 395, 30, 12);
+                if (!SetWindowSubclass(app.textHotkeyControl, shortcutFieldProcedure, 1, 0))
+                    throwWindowsError("Cannot initialize the text shortcut control.");
+                SendMessageW(app.textHotkeyControl, HKM_SETHOTKEY, app.textHotkey, 0);
                 control(L"STATIC",
                         L"Use a single key or Ctrl/Alt/Shift/Win + key.\n"
                         L"Global shortcuts override other apps. F12 is reserved.\n"
                         L"Backspace disables. Print Screen may need the\n"
                         L"Windows screen capture shortcut turned off.",
-                        0, 20, 170, 395, 84, 0);
-                control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 237, 266, 84, 30, IDOK);
-                control(L"BUTTON", L"Cancel", WS_TABSTOP, 331, 266, 84, 30, IDCANCEL);
+                        0, 20, 244, 395, 84, 0);
+                control(L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 237, 340, 84, 30, IDOK);
+                control(L"BUTTON", L"Cancel", WS_TABSTOP, 331, 340, 84, 30, IDCANCEL);
                 return 0;
             }
             case WM_COMMAND:
@@ -6392,7 +6579,9 @@ LRESULT CALLBACK settingsProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
                         static_cast<WORD>(SendMessageW(app.hotkeyControl, HKM_GETHOTKEY, 0, 0));
                     WORD full = static_cast<WORD>(
                         SendMessageW(app.instantHotkeyControl, HKM_GETHOTKEY, 0, 0));
-                    if (!registerShortcuts(value, full))
+                    WORD text =
+                        static_cast<WORD>(SendMessageW(app.textHotkeyControl, HKM_GETHOTKEY, 0, 0));
+                    if (!registerShortcuts(value, full, true, nullptr, text))
                         return 0;
                     app.shortcutsDirty = true;
                     bool saved = saveToolPreferences();
@@ -6406,7 +6595,8 @@ LRESULT CALLBACK settingsProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
                 break;
             case WM_CTLCOLORSTATIC:
                 if (reinterpret_cast<HWND>(lp) == app.hotkeyControl ||
-                    reinterpret_cast<HWND>(lp) == app.instantHotkeyControl)
+                    reinterpret_cast<HWND>(lp) == app.instantHotkeyControl ||
+                    reinterpret_cast<HWND>(lp) == app.textHotkeyControl)
                 {
                     HDC dc = reinterpret_cast<HDC>(wp);
                     SetBkColor(dc, GetSysColor(COLOR_WINDOW));
@@ -6426,7 +6616,7 @@ LRESULT CALLBACK settingsProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
             error(app.window, failure);
             if (message == WM_CREATE)
             {
-                app.hotkeyControl = app.instantHotkeyControl = nullptr;
+                app.hotkeyControl = app.instantHotkeyControl = app.textHotkeyControl = nullptr;
                 EnableWindow(app.window, TRUE);
             }
             else
@@ -8735,6 +8925,8 @@ int applicationMain(HINSTANCE instance, int show)
                 static_cast<WORD>(preferenceUInt(app.iniPath, L"Settings", L"Hotkey", app.hotkey));
             app.instantHotkey = static_cast<WORD>(
                 preferenceUInt(app.iniPath, L"Settings", L"InstantHotkey", app.instantHotkey));
+            app.textHotkey = static_cast<WORD>(
+                preferenceUInt(app.iniPath, L"Settings", L"TextHotkey", app.textHotkey));
             HDC dc = GetDC(nullptr);
             if (!dc)
                 throwWindowsError("Cannot read the desktop display settings.");
@@ -8773,17 +8965,18 @@ int applicationMain(HINSTANCE instance, int show)
             WORD initial = app.smoke || app.resizeTest || app.diagnosticInstance ? 0 : app.hotkey;
             WORD initialFull =
                 app.smoke || app.resizeTest || app.diagnosticInstance ? 0 : app.instantHotkey;
+            WORD initialText =
+                app.smoke || app.resizeTest || app.diagnosticInstance ? 0 : app.textHotkey;
             app.hotkey = 0;
             app.instantHotkey = 0;
-            if (!registerShortcuts(initial, initialFull, false))
+            app.textHotkey = 0;
+            if (!registerShortcuts(initial, initialFull, false, nullptr, initialText))
             {
-                // An unavailable new default must not disable the user's existing area shortcut.
-                if (registerShortcuts(initial, 0, false))
-                    status(L"Instant shortcut unavailable - choose another in Settings");
-                else if (registerShortcuts(0, initialFull, false))
-                    status(L"Area shortcut unavailable - choose another in Settings");
-                else
-                    status(L"Shortcuts unavailable - change them in Settings");
+                // Preserve each available shortcut independently when another is occupied.
+                registerShortcuts(initial, 0, false, nullptr, 0);
+                registerShortcuts(app.hotkey, initialFull, false, nullptr, 0);
+                registerShortcuts(app.hotkey, app.instantHotkey, false, nullptr, initialText);
+                status(L"A shortcut is unavailable - choose another in Settings");
             }
             if (!trayOnly || !app.tray)
             {

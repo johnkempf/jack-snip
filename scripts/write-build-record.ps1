@@ -21,9 +21,9 @@ if ((Test-Path -LiteralPath (Join-Path $taskRoot '.git')) -and (Get-Command git 
 }
 $taskInputs = @('build.ps1', 'package.ps1', 'CMakeLists.txt', 'scripts\write-build-record.ps1', 'scripts\make-icon.ps1', 'scripts\run-test.ps1')
 $taskInputs += Get-ChildItem -LiteralPath (Join-Path $taskRoot 'src') -File | ForEach-Object { 'src\' + $_.Name }
-$taskInputs += Get-ChildItem -LiteralPath (Join-Path $taskRoot 'tests') -File | ForEach-Object { 'tests\' + $_.Name }
+$taskInputs += Get-ChildItem -LiteralPath (Join-Path $taskRoot 'tests') -File -Recurse |
+    ForEach-Object { $_.FullName.Substring($taskRoot.Length + 1) }
 $taskInputs += Get-ChildItem -LiteralPath (Join-Path $taskRoot 'resources') -File -Recurse |
-    Where-Object { $_.Extension -in @('.rc', '.manifest', '.ico', '.png', '.h') } |
     ForEach-Object { $_.FullName.Substring($taskRoot.Length + 1) }
 $taskHashes = @($taskInputs | Sort-Object -Unique | ForEach-Object {
     [ordered]@{ path = $_; sha256 = (Get-FileHash -LiteralPath (Join-Path $taskRoot $_) -Algorithm SHA256).Hash }

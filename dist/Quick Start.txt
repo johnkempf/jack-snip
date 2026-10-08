@@ -22,6 +22,18 @@ New captures copy automatically by default. Settings > Auto copy new snips turns
 Ctrl+C copies the current image with all annotations, including edits made after capture.
 Ctrl+S saves a PNG; Ctrl+Shift+S chooses a new filename.
 Ctrl+Alt+F instantly captures all monitors and the mouse pointer, preserving hover menus.
+Ctrl+Alt+T copies text: drag over text, release, then paste anywhere.
+Text recognition runs locally using the built-in Windows OCR engine and installed
+recognition languages. No separate OCR engine or model is included.
+Small, tight selections are enlarged and padded internally before recognition.
+On flat backgrounds, rows cut by a selection edge are omitted. Leave a small
+margin around the complete line you want to copy.
+The Text copied popup shows what was copied for three seconds; hover to keep it open.
+Long previews are shortened, but all recognized lines are copied. Click to dismiss.
+Esc cancels. If no text is found, the previous clipboard stays intact.
+Change the text shortcut under Settings > Capture or Keyboard shortcuts in the tray.
+Settings > Actions > Copy text from snip reads text from the current screenshot.
+Check exact identifiers for OCR mistakes; zoom in before selecting small text.
 Click Crop in the left tool rail, drag the part to keep, and release.
 Esc cancels cropping. Ctrl+Z restores the previous image; Ctrl+Y reapplies the crop.
 Annotations move with the crop. Copy and Save export just the cropped image.

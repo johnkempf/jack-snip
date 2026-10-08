@@ -11,4 +11,5 @@ struct ClipboardFailure
 };
 bool copyBitmap(HWND owner, const Bitmap &bitmap, const std::vector<uint8_t> &png,
                 ClipboardFailure *failure = nullptr);
+bool copyText(HWND owner, const std::wstring &text, ClipboardFailure *failure = nullptr);
 } // namespace snip

@@ -27,6 +27,22 @@ Click **New snip** and drag a rectangle. Add annotations, then press **Ctrl+C** 
 The capture icon on the welcome screen also starts a snip. **Recent** keeps the last ten captures;
 right-click a thumbnail and choose **Copy** to copy it with annotations without reopening it.
 
+**Ctrl+Alt+T** copies text from an area: drag over the text, release, then paste anywhere.
+Recognition runs locally using the built-in Windows OCR engine and your installed
+recognition language; no image is uploaded or separate OCR model bundled.
+Tight selections are padded internally; small text is enlarged and its contrast adjusted
+before recognition, so you do not need to select a large empty area around a label.
+On flat document and app backgrounds, rows with characters cut by a selection edge are
+omitted. Leave a small margin around the complete line you want to copy.
+A small **Text copied** popup previews the exact text for three seconds. Hover to keep it
+visible; click to dismiss. Long previews are shortened, while the clipboard contains all
+recognized lines. **Esc** cancels; a selection with no text leaves your clipboard unchanged.
+The editor and current snip are preserved. Change or disable this shortcut under
+**Settings → Capture**, or in the tray's **Keyboard shortcuts** dialog. The capture menu
+also offers **Copy text from an area**; **Settings → Actions → Copy text from snip** extracts
+text from the current screenshot. OCR can confuse small or blurry characters, so check
+the preview for exact identifiers and zoom in before selecting when needed.
+
 **Settings → Toolbar layout** switches immediately between **Top toolbars** (the original ribbon)
 and **Side panels** (the tool rail and properties panel). The choice and each layout's visibility
 settings are remembered. Switching keeps the current image, annotations, selection and undo history.
@@ -84,6 +100,10 @@ Using the toolchain described in [BUILD-TOOLCHAIN.md](BUILD-TOOLCHAIN.md):
 .\build.ps1 -Test
 .\package.ps1
 ```
+
+OCR uses Windows platform APIs; builds need no third-party OCR libraries or models.
+The alternative bundled-engine implementation is preserved on `codex/bundled-ocr`
+for personal use. `main` contains the Windows-only implementation.
 
 ## Support
 

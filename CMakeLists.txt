@@ -2,12 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 project(TigerSnip VERSION 1.0.2 LANGUAGES CXX RC)
 set(TIGER_SNIP_CORE_SOURCES
   src/model.cpp src/graphics.cpp src/windows_support.cpp src/settings.cpp
-  src/color_picker.cpp src/capture.cpp src/clipboard.cpp src/file_io.cpp src/test_reports.cpp)
+  src/color_picker.cpp src/capture.cpp src/clipboard.cpp src/file_io.cpp src/test_reports.cpp
+  src/ocr.cpp src/ocr_layout.cpp src/text_notice.cpp)
 function(tiger_snip_target target)
   target_compile_features(${target} PRIVATE cxx_std_20)
   target_compile_definitions(${target} PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
   target_include_directories(${target} PRIVATE src resources)
-  target_link_libraries(${target} PRIVATE d2d1 dwrite windowscodecs ole32 user32 gdi32 comdlg32 comctl32 shell32 advapi32 dwmapi uuid)
+  target_link_libraries(${target} PRIVATE d2d1 dwrite windowscodecs ole32 user32 gdi32 comdlg32 comctl32 shell32 advapi32 dwmapi uuid runtimeobject)
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
     set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -22,7 +23,7 @@ tiger_snip_target(TigerSnip)
 include(CTest)
 if(BUILD_TESTING)
   add_test(NAME native_self_test COMMAND TigerSnip --self-test)
-  foreach(test clipboard autocopy file_save settings robustness text_edit ui native_menu single_instance)
+  foreach(test clipboard autocopy file_save settings robustness text_edit text_capture ui native_menu single_instance)
     add_executable(${test}_test tests/${test}.cpp ${TIGER_SNIP_CORE_SOURCES} resources/app.rc)
     tiger_snip_target(${test}_test)
     if(test STREQUAL "robustness" OR test STREQUAL "file_save")
@@ -30,7 +31,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME ${test}_test COMMAND powershell -NoProfile -ExecutionPolicy Bypass
       -File "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-test.ps1" -Executable "$<TARGET_FILE:${test}_test>"
-      -OutputRoot "${CMAKE_CURRENT_BINARY_DIR}/test-output")
+      -OutputRoot "${CMAKE_CURRENT_BINARY_DIR}/t")
   endforeach()
   # This regression checks pixels in the visible Windows frame.
   set_tests_properties(native_menu_test PROPERTIES RUN_SERIAL TRUE)

@@ -19,4 +19,8 @@ Build, test, and package:
 
 The output is `dist/Tiger Snip.exe` and `dist/Tiger Snip Setup.msi`. The C++ runtime is statically linked; Windows provides the system graphics libraries. Runtime notices are included in the installer.
 
+Text recognition uses Windows OCR through WinRT. No third-party OCR engine or
+model is linked, downloaded, or packaged on `main`. Windows supplies the recognition
+components; the app maintains its own selection preprocessing and clipboard logic.
+
 `Tiger Snip Build.json` records the compiler, build options, source hashes, and executable hash. Packaging checks these hashes. `Tiger Snip Release.txt` records the installer and payload hashes.
