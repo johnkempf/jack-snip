@@ -143,9 +143,7 @@ void paintClassicEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush
                                       button.command == Eyedropper || button.command == TextBold ||
                                       button.command == TextBox);
         const bool neutralSelection = available && on && !accentSelection;
-        Color bg = button.command == NewSnip
-                       ? mixColor(uiSolidAccent(), rgb(0, 0, 0), over ? .12f : 0)
-                   : accentSelection   ? uiSelected()
+        Color bg = accentSelection    ? uiSelected()
                    : neutralSelection  ? uiRaised()
                    : over && available ? mixColor(uiSurface(), Ink, .06f)
                                        : uiSurface();
@@ -153,9 +151,10 @@ void paintClassicEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush
                        : neutralSelection ? mixColor(uiBorder(), Ink, .25f)
                                           : uiBorder();
         if (down)
-            bg = button.command == NewSnip ? mixColor(uiSolidAccent(), rgb(0, 0, 0), .22f)
-                                           : mixColor(bg, Ink, .08f);
-        if (styleMenu || (button.command >= CircleTool && button.command <= LineTool))
+            bg = mixColor(bg, Ink, .08f);
+        if (button.command == NewSnip)
+            paintCaptureSurface(rt, brush, r, 8, over, down);
+        else if (styleMenu || (button.command >= CircleTool && button.command <= LineTool))
         {
             // Split tools share one surface; their small chevron remains a separate hit target.
             Rect whole = styleMenu ? Rect{r.left - 84, r.top, r.right, r.bottom}
@@ -184,7 +183,7 @@ void paintClassicEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush
             }
         }
         Color fg = !available                  ? Muted
-                   : button.command == NewSnip ? rgb(255, 255, 255)
+                   : button.command == NewSnip ? uiCaptureText()
                    : accentSelection           ? uiAccentText()
                                                : Ink;
         if (button.command >= ToggleActions && button.command <= ToggleFormatting)

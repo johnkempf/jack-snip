@@ -4,7 +4,6 @@ constexpr std::array<int, 3> PresetThemeIndices = {0, 2, 3};
 constexpr std::array<Color, 4> ThemeAccents = {ClassicAccent, OrangeAccent, rgb(37, 99, 235),
                                                rgb(0, 133, 119)};
 constexpr std::array<const wchar_t *, 4> ThemeNames = {L"Purple", L"Orange", L"Blue", L"Teal"};
-Color customSolidAccent = ClassicAccent;
 Color mixColor(Color a, Color b, float amount)
 {
     auto component = [&](int shift) {
@@ -29,23 +28,17 @@ Color uiBorder()
 {
     return app.darkTheme ? rgb(58, 67, 81) : rgb(224, 228, 233);
 }
+Color uiSolidAccent()
+{
+    return app.colorTheme == 4 ? app.customUIAccent : ThemeAccents[app.colorTheme];
+}
 Color uiSelected()
 {
-    return mixColor(uiSurface(), Accent, app.darkTheme ? .22f : .10f);
+    return mixColor(uiSurface(), uiSolidAccent(), app.darkTheme ? .22f : .10f);
 }
 Color uiSelectedBorder()
 {
-    return mixColor(uiSurface(), Accent, .46f);
-}
-Color uiPrimary()
-{
-    return app.darkTheme ? rgb(46, 55, 68) : rgb(32, 38, 46);
-}
-Color uiSolidAccent()
-{
-    if (app.colorTheme == 4)
-        return customSolidAccent;
-    return ThemeAccents[app.colorTheme];
+    return mixColor(uiSurface(), uiSolidAccent(), .46f);
 }
 double colorLuminance(Color c)
 {
@@ -73,7 +66,25 @@ Color readableAccent(Color c, Color surface, Color toward, double minimum)
 }
 Color uiAccentText()
 {
-    return app.darkTheme ? Accent : uiSolidAccent();
+    return readableAccent(uiSolidAccent(), uiSelected(),
+                          app.darkTheme ? rgb(255, 255, 255) : rgb(0, 0, 0), 4.5);
+}
+Color uiCaptureText()
+{
+    const auto background = uiSolidAccent();
+    const Color dark = rgb(32, 38, 46), white = rgb(255, 255, 255);
+    if (colorContrast(background, dark) >= 4.5)
+        return dark;
+    return colorContrast(background, white) >= 4.5 ? white : rgb(0, 0, 0);
+}
+Color uiCaptureBorder()
+{
+    const auto background = uiSolidAccent();
+    // Pale fills on Light and dark fills on Dark need an edge, not a different fill.
+    if (colorContrast(background, uiSurface()) < 3)
+        return readableAccent(background, uiSurface(),
+                              app.darkTheme ? rgb(233, 237, 244) : rgb(32, 38, 46), 3);
+    return mixColor(background, uiCaptureText(), .18f);
 }
 Color themeSurfaceColor(Color c)
 {
@@ -115,7 +126,7 @@ void updateInterfaceColors()
         Accent = mixColor(Accent, rgb(255, 255, 255), .23f);
     if (app.colorTheme == 4)
     {
-        // Keep arbitrary colors readable; the saved color and its swatch stay exact.
+        // Adapt small foreground marks independently of the exact accent surfaces.
         if (app.darkTheme)
         {
             const unsigned largest = std::max({Accent & 255, (Accent >> 8) & 255,
@@ -126,8 +137,6 @@ void updateInterfaceColors()
         }
         else
             Accent = readableAccent(base, uiSurface(), rgb(0, 0, 0), 3);
-        customSolidAccent = readableAccent(base, app.darkTheme ? rgb(255, 255, 255) : uiSelected(),
-                                           rgb(0, 0, 0), 4.5);
     }
     Ink = app.darkTheme ? rgb(233, 237, 244) : rgb(32, 38, 46);
     Muted = app.darkTheme ? rgb(158, 170, 188) : rgb(112, 121, 135);

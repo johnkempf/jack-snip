@@ -275,6 +275,60 @@ int wmain()
             app.hover = app.pressed = 0;
             buildButtons();
         };
+        auto verifyCaptureChrome = [&] {
+            const auto savedHover = app.hover, savedPressed = app.pressed;
+            app.hover = app.pressed = 0;
+            buildButtons();
+            auto pixel = [&](const Bitmap &image, Point p) {
+                p = p * app.dpi;
+                const auto i = (static_cast<size_t>(p.y) * image.width + static_cast<int>(p.x)) * 4;
+                return rgb(image.pixels[i + 2], image.pixels[i + 1], image.pixels[i]);
+            };
+            auto exactFill = [&](const Bitmap &image, Rect r) {
+                require(pixel(image, {(r.left + r.right) / 2, r.top + 4}) == uiSolidAccent(),
+                        "A capture button changed the chosen accent fill.");
+                int foregroundPixels = 0;
+                for (int y = static_cast<int>((r.top + 8) * app.dpi);
+                     y < static_cast<int>((r.bottom - 8) * app.dpi); ++y)
+                    for (int x = static_cast<int>((r.left + 5) * app.dpi);
+                         x < static_cast<int>((r.right - 5) * app.dpi); ++x)
+                    {
+                        const auto i = (static_cast<size_t>(y) * image.width + x) * 4;
+                        if (rgb(image.pixels[i + 2], image.pixels[i + 1], image.pixels[i]) ==
+                            uiCaptureText())
+                            ++foregroundPixels;
+                    }
+                require(foregroundPixels >= 5,
+                        "Capture labels/icons did not use the readable foreground color.");
+            };
+            require(colorContrast(uiSolidAccent(), uiCaptureText()) >= 4.5,
+                    "The capture label/icon has insufficient contrast against its fill.");
+            const auto idle = renderEditorPreview();
+            for (size_t i = 0; i < app.buttons.size(); ++i)
+            {
+                const auto &b = app.buttons[i];
+                if (b.command != NewSnip && b.command != CaptureMenu)
+                    continue;
+                exactFill(idle, b.rect);
+                app.hover = b.command;
+                const auto hover = renderEditorPreview();
+                exactFill(hover, b.rect);
+                require(hover.pixels != idle.pixels, "Capture hover has no visible feedback.");
+                app.pressed = static_cast<int>(i + 1);
+                const auto down = renderEditorPreview();
+                exactFill(down, b.rect);
+                require(down.pixels != hover.pixels, "Capture press has no visible feedback.");
+                app.hover = app.pressed = 0;
+            }
+            if (!app.classicUI && hasImage())
+            {
+                const auto r = button(Copy);
+                require(pixel(idle, {r.left + 8, r.top + 4}) == uiSurface(),
+                        "The secondary Copy action still uses a dark primary fill.");
+            }
+            app.hover = savedHover;
+            app.pressed = savedPressed;
+        };
         auto slide = [&](int id, float from, float to, bool cancel = false) {
             const auto r = button(id);
             const float cy = (r.top + r.bottom) / 2;
@@ -532,6 +586,7 @@ int wmain()
                             "Changing layout reset the color theme or appearance.");
                     auto preview = renderEditorPreview();
                     verifyClassicChrome();
+                    verifyCaptureChrome();
                     // Sample a solid toolbar surface, away from labels and controls.
                     const size_t i = (static_cast<size_t>(3) * preview.width + 3) * 4;
                     require((preview.pixels[i] < 100) == app.darkTheme,
@@ -582,6 +637,7 @@ int wmain()
                 require(app.colorTheme == 4 && app.customUIAccent == pickedColor,
                         "Custom UI color was reset by layout or Light/Dark changes.");
                 verifyClassicChrome();
+                verifyCaptureChrome();
                 saveBytes(std::wstring(app.classicUI ? L"ui-top-custom-" : L"ui-side-custom-") +
                               (app.darkTheme ? L"dark.png" : L"light.png"),
                           app.graphics.png(renderEditorPreview()));
@@ -609,7 +665,8 @@ int wmain()
         saveBytes(L"ui-settings-custom-dark.png", app.graphics.png(renderEditorPreview()));
         // Black, white and pale colors remain usable in both appearances/layouts.
         processKey(VK_ESCAPE);
-        for (Color chosen : {rgb(0, 0, 0), rgb(255, 255, 255), rgb(255, 255, 190)})
+        for (Color chosen : {rgb(0, 0, 0), rgb(255, 255, 255), rgb(255, 255, 190),
+                             rgb(224, 237, 219), rgb(27, 45, 85), rgb(117, 117, 117)})
         {
             customThemePickerTest = {app.customUIAccent, chosen, false, {}};
             customUIColor(driveCustomThemePicker);
@@ -617,7 +674,8 @@ int wmain()
             for (int appearance : {AppearanceLight, AppearanceDark})
             {
                 command(appearance);
-                require(colorContrast(uiSolidAccent(), rgb(255, 255, 255)) >= 4.5 &&
+                require(uiSolidAccent() == chosen &&
+                            colorContrast(uiSolidAccent(), uiCaptureText()) >= 4.5 &&
                             colorContrast(uiAccentText(), uiSelected()) >= 4.5,
                         "Custom UI labels became unreadable with an extreme color.");
                 for (int layout : {InterfaceClassic, InterfaceOrange})
@@ -625,6 +683,14 @@ int wmain()
                     command(layout);
                     auto preview = renderEditorPreview();
                     verifyClassicChrome();
+                    verifyCaptureChrome();
+                    saveBytes(std::wstring(app.classicUI ? L"ui-top-exact-" : L"ui-side-exact-") +
+                                  std::to_wstring(chosen) +
+                                  (app.darkTheme ? L"-dark.png" : L"-light.png"),
+                              app.graphics.png(preview));
+                    require(renderedExport().pixels == themeExport.pixels &&
+                                app.palette == priorPalette && app.colors == priorToolColors,
+                            "An exact accent color changed the exported image or drawing colors.");
                     const size_t i = (static_cast<size_t>(3) * preview.width + 3) * 4;
                     require((preview.pixels[i] < 100) == app.darkTheme,
                             "A custom UI color replaced toolbar surfaces in Dark.");
@@ -709,6 +775,7 @@ int wmain()
                     app.dpi = dpi;
                     SetWindowPos(app.window, nullptr, 0, 0, static_cast<int>(size.x * dpi),
                                  static_cast<int>(size.y * dpi), SWP_NOZORDER | SWP_NOACTIVATE);
+                    verifyCaptureChrome();
                     for (Tool tool : {Tool::Select, Tool::Pen, Tool::Highlight, Tool::Text,
                                       Tool::Arrow, Tool::Circle, Tool::Check, Tool::Line})
                     {
@@ -872,6 +939,26 @@ int wmain()
         app.image = {};
         app.document.clear();
         app.tool = Tool::Select;
+        // The welcome action shares the same exact fill and foreground as the toolbar action.
+        for (Color chosen : {rgb(255, 255, 255), rgb(224, 237, 219), rgb(27, 45, 85)})
+        {
+            customThemePickerTest = {app.customUIAccent, chosen, false, {}};
+            customUIColor(driveCustomThemePicker);
+            require(customThemePickerTest.error.empty(), "Cannot choose a welcome accent color.");
+            for (int appearance : {AppearanceLight, AppearanceDark})
+                for (int layout : {InterfaceClassic, InterfaceOrange})
+                {
+                    command(appearance);
+                    command(layout);
+                    verifyCaptureChrome();
+                    saveBytes(std::wstring(app.classicUI ? L"ui-welcome-top-" : L"ui-welcome-side-") +
+                                  std::to_wstring(chosen) +
+                                  (app.darkTheme ? L"-dark.png" : L"-light.png"),
+                              app.graphics.png(renderEditorPreview()));
+                }
+        }
+        command(ThemePurple);
+        command(AppearanceLight);
         for (int layout : {InterfaceClassic, InterfaceOrange})
         {
             command(layout);
@@ -891,6 +978,8 @@ int wmain()
             << "PASS: complete modern settings/menus, overlay input isolation and shortcut recording, "
                "three presets and light/dark in both layouts with identical exports, theme persistence, "
                "custom UI picker Apply/Cancel/validation/reload and remembered color, "
+               "exact accent capture fills with readable labels/icons and border hover/press "
+               "feedback in both layouts/appearances and welcome actions, neutral Copy, "
                "extreme-color contrast with unchanged drawing defaults, "
                "compact scrolling settings at each DPI; native UI layout at "
                "100/150/200% DPI, compact bounds, preset/custom "

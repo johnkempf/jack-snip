@@ -49,8 +49,10 @@ you can also use **Settings → Settings...**. **Appearance → New UI** switche
 export, view and app actions. Settings save immediately. Choose **Purple**, **Blue**
 or **Teal**, then **Light** or **Dark**; both choices work with either layout and affect only
 the editor. **Custom color** opens the color spectrum with RGB and hex input for your own UI
-accent. Apply saves it; Cancel keeps the previous theme. Accent shades adjust for readable controls
-in Light and Dark, while the chosen color is remembered when you switch presets.
+accent. Apply saves it; Cancel keeps the previous theme. Capture buttons show the exact chosen
+color in both layouts and appearances, with readable light or dark labels and subtle borders.
+Small accent labels and icons adjust for readability. The chosen color is remembered when you
+switch presets.
 Capture shortcuts, auto copy, rendering, all border options and all six logo styles
 remain available. The capture button's chevron
 also offers an instant capture of all monitors. Zoom and Fit are in the bottom bar.

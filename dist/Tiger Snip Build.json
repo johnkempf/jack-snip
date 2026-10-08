@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
-  "builtAtUtc": "2026-10-08T00:31:25Z",
-  "sourceBaseCommit": "7e1f453ae46f31d3eacc616dc04edc0aeb3075a0",
+  "builtAtUtc": "2026-10-08T00:47:32Z",
+  "sourceBaseCommit": "db54b30175ef8ddb79e5e7df131a0880ff452847",
   "workingTreeHasUncommittedChanges": true,
   "compilerVersion": [
     "clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
@@ -75,7 +75,7 @@
   "powershellVersion": "7.6.5",
   "output": {
     "name": "Tiger Snip.exe",
-    "sha256": "EDF3C3E2D754C04B4D65F8B3D0174A7E8B0E86F7D08304487ECC9C03CE383E53"
+    "sha256": "0735D0062E45D8F24066AD87BD573FD9C0646D60529C5FCD7F56E8FCB95F7B4B"
   },
   "inputs": [
     {
@@ -164,11 +164,11 @@
     },
     {
       "path": "src\\editor_chrome.h",
-      "sha256": "AAE109C9ED72F3A357EF01495242DA6C5DF76D6B5CCD9BC1B26071230F95E597"
+      "sha256": "C16C02717057753D1886B23B1FD801161FD7AD11C9075699B881A1DA928DFFB9"
     },
     {
       "path": "src\\editor_classic_chrome.h",
-      "sha256": "6CAE7BB864B90A0404FB32492F70EDF50A98EDD2C6ABB67BDAFA0A915DC1B6CB"
+      "sha256": "F0FD76A809E71F4654349BC43FA07AC4E0A22F5CCD587F8E3A3F163824AFD176"
     },
     {
       "path": "src\\editor_classic_layout.h",
@@ -188,7 +188,7 @@
     },
     {
       "path": "src\\editor_theme.h",
-      "sha256": "22BA924E2686E95C77ABB061BC1A9116A2DAD974474AC41141376AF995A1A453"
+      "sha256": "74F485BB5F73E3BFC943405B8EF8115CFFDBA82A2626B21404E651EA34F21571"
     },
     {
       "path": "src\\file_io.cpp",
@@ -280,7 +280,7 @@
     },
     {
       "path": "tests\\ui.cpp",
-      "sha256": "24E578B94A81E67D221F8068588FF9F12B05EE9DD648AF9C86988CE15787AA06"
+      "sha256": "36F92293D9CA178E0165C9220A70CE10E86FD8240382E879F59EB51270AF6837"
     }
   ]
 }

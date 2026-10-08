@@ -95,7 +95,9 @@ Appearance offers Classic UI (Top toolbars) or New UI (Side panels), three color
 Blue and Teal), and Light or Dark. Colors work with either layout and do not alter exports.
 Custom color opens the spectrum, RGB and hex picker for your own UI accent.
 Apply color saves it immediately; Cancel keeps the previous theme. The custom color is
-remembered when you use another preset. Shades adapt to keep Light/Dark controls readable.
+remembered when you use another preset. Capture buttons show the exact chosen color in
+both layouts and Light/Dark, with readable light or dark text/icons and subtle borders.
+Small accent labels and icons adapt for readability.
 Top toolbars offers the same picker through Settings > Color theme > Custom color.
 General, Capture, Export and View keep every original setting; Actions offers app commands.
 Settings save automatically. Esc or Done closes the panel. Scroll shorter panels;

@@ -33,6 +33,21 @@ void drawToolGlyph(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush, int id, P
     else
         drawUIIcon(rt, brush, id, p, fg);
 }
+void paintCaptureSurface(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush, Rect r,
+                         float radius, bool hover, bool down)
+{
+    const auto box = D2D1::RoundedRect({r.left, r.top, r.right, r.bottom}, radius, radius);
+    // Bypass legacy surface remapping so even pure white stays the chosen color in Dark.
+    brush->SetColor(color(uiSolidAccent()));
+    rt->FillRoundedRectangle(box, brush);
+    brush->SetColor(color(mixColor(uiCaptureBorder(), uiCaptureText(),
+                                  down ? .55f : hover ? .28f : 0)));
+    const float width = down ? 2 : hover ? 1.5f : 1;
+    const float inset = width / 2;
+    rt->DrawRoundedRectangle(
+        D2D1::RoundedRect({r.left + inset, r.top + inset, r.right - inset, r.bottom - inset},
+                         radius, radius), brush, width);
+}
 void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
 {
     const auto client = clientDips(), canvas = canvasRect();
@@ -351,28 +366,34 @@ void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
         }
         else
         {
-            const bool primary =
-                b.command == NewSnip || b.command == CaptureMenu || b.command == Copy;
-            const bool outlined = b.command == Save || b.command == RecentSnips ||
-                                  b.command == TextBold || b.command == TextBox || b.command == ToggleFit;
+            const bool primary = b.command == NewSnip || b.command == CaptureMenu;
+            const bool outlined = b.command == Copy || b.command == Save ||
+                                  b.command == RecentSnips || b.command == TextBold ||
+                                  b.command == TextBox || b.command == ToggleFit;
             if (primary)
             {
-                const Color bg = !available ? rgb(229, 232, 237)
-                                 : down     ? rgb(14, 19, 26)
-                                 : hover    ? rgb(49, 58, 69)
-                                            : uiPrimary();
                 if ((b.command == NewSnip && r.top < toolbarHeight()) || b.command == CaptureMenu)
                 {
+                    const int pressed = app.pressed > 0 &&
+                                                app.pressed <= static_cast<int>(app.buttons.size())
+                                            ? app.buttons[app.pressed - 1].command : 0;
+                    const bool splitHover = app.hover == NewSnip || app.hover == CaptureMenu;
+                    const bool splitDown =
+                        splitHover && (pressed == NewSnip || pressed == CaptureMenu);
                     rt->PushAxisAlignedClip({r.left, r.top, r.right, r.bottom},
                                             D2D1_ANTIALIAS_MODE_ALIASED);
-                    surface({20, r.top, 180, r.bottom}, bg);
+                    paintCaptureSurface(rt, brush, {20, r.top, 180, r.bottom}, 5,
+                                        splitHover, splitDown);
                     rt->PopAxisAlignedClip();
                     if (b.command == CaptureMenu)
-                        fill({r.left, r.top + 8, r.left + 1, r.bottom - 8}, rgb(68, 75, 85));
+                    {
+                        brush->SetColor(color(uiCaptureText(), .25f));
+                        rt->FillRectangle({r.left, r.top + 8, r.left + 1, r.bottom - 8}, brush);
+                    }
                 }
                 else
-                    surface(r, bg);
-                fg = available ? rgb(255, 255, 255) : Muted;
+                    paintCaptureSurface(rt, brush, r, 5, hover, down);
+                fg = uiCaptureText();
             }
             else if (outlined || on || hover)
                 surface(r,
@@ -385,8 +406,7 @@ void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
             else if (b.command == NewSnip || b.command == Copy || b.command == Save ||
                      b.command == RecentSnips)
             {
-                drawUIIcon(rt, brush, b.command, {r.left + 10, (r.top + r.bottom) / 2 - 10},
-                           b.command == NewSnip ? Accent : fg);
+                drawUIIcon(rt, brush, b.command, {r.left + 10, (r.top + r.bottom) / 2 - 10}, fg);
                 text(b.command == Copy && app.status.find(L"Copied") == 0 ? L"Copied" : b.label,
                      {r.left + 38, r.top, r.right - (b.command == RecentSnips ? 24 : 6), r.bottom},
                      fg);
