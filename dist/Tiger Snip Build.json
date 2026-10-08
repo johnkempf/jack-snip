@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
-  "builtAtUtc": "2026-10-08T15:05:38Z",
-  "sourceBaseCommit": "ef3fb851239ef2f2f972fdd2ec8c3451283b2375",
+  "builtAtUtc": "2026-10-08T15:36:24Z",
+  "sourceBaseCommit": "88126a65e93d8e463fc4549b60fd97f1cdea2dc9",
   "workingTreeHasUncommittedChanges": true,
   "compilerVersion": [
     "clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
@@ -79,7 +79,7 @@
   "powershellVersion": "7.6.5",
   "output": {
     "name": "Tiger Snip.exe",
-    "sha256": "AC2B7BDD34E3386A63BF3598D1C2CA0C65AAED57795182536A130A3D6F32EF7B"
+    "sha256": "70431A86538C072B6A9C865889BB217E6C04FC67B0FB4A585ABD28AFCB7303D0"
   },
   "inputs": [
     {
@@ -244,15 +244,15 @@
     },
     {
       "path": "src\\ocr_layout.cpp",
-      "sha256": "002EC3204A9423C2CE3743D6E987CD4DE67F548E5B9DC62C686B6852E5791F88"
+      "sha256": "50D1460F1C1935B1F2F7818AEBAF55E0E7400080A7562905426E7CC777F06449"
     },
     {
       "path": "src\\ocr_layout.h",
-      "sha256": "324EAFE6791E84C168CBEE7ECFD180638E1F74C719CC00B10838893218EDC079"
+      "sha256": "73AFA14D16C6A352F6DD6A815CB5EC0821D0F3D01C897AE3560D0AA30126670B"
     },
     {
       "path": "src\\ocr.cpp",
-      "sha256": "E5AFA370D8859F7365C9F799B3D5E10A446DA415C08488AB90CE13FF73189DF1"
+      "sha256": "5BF6D8F643042626301159372A9C2249ABE564F239A7CA1E594CA01B2B1CCBCD"
     },
     {
       "path": "src\\ocr.h",
@@ -311,6 +311,10 @@
       "sha256": "A91B1C74AE28DB8873595F9808678CADEAFEA0366BC801BF285BB05169150816"
     },
     {
+      "path": "tests\\fixtures\\ocr\\due-date-status.png",
+      "sha256": "F7150B08173C1414A07BBD51A7AE8B0531C07B84A6B809A9F8A7B6C61F9A7B82"
+    },
+    {
       "path": "tests\\fixtures\\ocr\\hyphenated-part.png",
       "sha256": "9DF92C62C0475F4CA6676FD18A9B1E75F33FD8A8B1502E0B1B4276669157DD66"
     },
@@ -336,7 +340,15 @@
     },
     {
       "path": "tests\\fixtures\\ocr\\README.md",
-      "sha256": "D91EAB505101140E7FF0932544EC2A3E3CAB52F747AA7E7FD61DC46D828E8565"
+      "sha256": "EECF8AC37FF59B3B4C45DA56C272E69232CF25670DC861F9BAEC334AC0F2CD2E"
+    },
+    {
+      "path": "tests\\fixtures\\ocr\\red-part-number.png",
+      "sha256": "0162B8A2180ADA3A56C63B137D8EBD6BFFAD19248A314107E79272A996445960"
+    },
+    {
+      "path": "tests\\fixtures\\ocr\\selected-serial.png",
+      "sha256": "D3D60DA7700F18AC07BBA690E646AA60CCF107C78036A01D983549666314B276"
     },
     {
       "path": "tests\\fixtures\\ocr\\serial-number.png",
@@ -364,7 +376,7 @@
     },
     {
       "path": "tests\\text_capture.cpp",
-      "sha256": "EF7E1FBDD65E6499180F19F1D58F5BF70BD063D97E1D7230FFF14EA36718219D"
+      "sha256": "955F659D45E630D4DFEED2ACA1F47EC8A0B0111734C6D27848148031C4CBAD9F"
     },
     {
       "path": "tests\\text_edit.cpp",

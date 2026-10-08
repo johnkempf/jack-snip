@@ -14,6 +14,9 @@ area-selection completion path, including punctuation and identifier digits:
 | hyphenated-part.png | APF6-037-01-04-RA |
 | clipped-date-row.png | 3/31/2025 2:38 PM (clipped first row omitted) |
 | quantity-and-zero.png | CurrentQuantity (isolated zero is outside the accuracy requirement) |
+| red-part-number.png | RSP-241492-01 (thin condensed red font) |
+| due-date-status.png | (Friday) 10/16/2026 followed by Not completed yet. |
+| selected-serial.png | 36808975 (small white digits on blue) |
 
 `quoted-unit.png` is retained as a known Windows OCR quality limitation. Its
 target is `Each’ (‘EA’)`; the test reports the actual result without asserting

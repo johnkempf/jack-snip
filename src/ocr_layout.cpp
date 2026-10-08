@@ -54,6 +54,11 @@ TextLayout analyzeTextRows(const Bitmap &image, std::stop_token stop)
     result.reliable = true;
     std::vector<uint8_t> ink(height), clipped(height);
     std::vector<size_t> component;
+    struct Glyph
+    {
+        int top, bottom, width, height;
+    };
+    std::vector<Glyph> glyphs;
     for (size_t start = 0; start < mask.size(); ++start)
     {
         if (mask[start] != 1)
@@ -100,6 +105,7 @@ TextLayout analyzeTextRows(const Bitmap &image, std::stop_token stop)
             continue;
         }
         const bool cut = left == 0 || right == width - 1 || top == 0 || bottom == height - 1;
+        glyphs.push_back({top, bottom, w, h});
         for (int y = top; y <= bottom; ++y)
         {
             ink[y] = 1;
@@ -130,6 +136,19 @@ TextLayout analyzeTextRows(const Bitmap &image, std::stop_token stop)
         // Preserve a bounded uniform panel surrounding the row. Different row
         // heights/selection margins must not change quote or hyphen recognition.
         const auto &bg = backgrounds[(row.top + row.bottom - 1) / 2];
+        row.glyphHeight = row.bottom - row.top;
+        // Tall condensed fonts can look like separated characters or O/l to
+        // Windows OCR. Measure actual glyph proportions, independent of text.
+        std::vector<double> proportions;
+        for (const auto &glyph : glyphs)
+            if (glyph.top >= row.top && glyph.bottom < row.bottom &&
+                glyph.height >= row.glyphHeight * .7 && glyph.width <= glyph.height * 1.5)
+                proportions.push_back(static_cast<double>(glyph.width) / glyph.height);
+        if (row.glyphHeight >= 16 && proportions.size() >= 4)
+        {
+            std::sort(proportions.begin(), proportions.end());
+            row.condensed = proportions[proportions.size() / 2] < .55;
+        }
         const int first = std::max(0, row.top - 16), last = std::min(height, row.bottom + 16);
         auto sameBackground = [&](int cy) {
             for (int c = 0; c < 3; ++c)

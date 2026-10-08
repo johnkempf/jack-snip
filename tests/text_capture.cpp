@@ -240,7 +240,7 @@ int wmain()
         // preprocessing helper. Exact expectations catch lost punctuation and
         // the O/0, l/1 mistakes that padding alone did not fix.
         for (auto [filename, expectedText] :
-             std::array<std::pair<const wchar_t *, const wchar_t *>, 8>{
+             std::array<std::pair<const wchar_t *, const wchar_t *>, 11>{
                  {{L"part-number.png", L"RSP-241492-01"},
                   {L"serialized.png", L"Serialized:"},
                   {L"serial-number.png", L"1301558"},
@@ -248,7 +248,10 @@ int wmain()
                   {L"parcels-area.png", L"683: Empty Parcels Area"},
                   {L"quantity-and-zero.png", L"CurrentQuantity"},
                   {L"hyphenated-part.png", L"APF6-037-01-04-RA"},
-                  {L"clipped-date-row.png", L"3/31/2025 2:38 PM"}}})
+                  {L"clipped-date-row.png", L"3/31/2025 2:38 PM"},
+                  {L"red-part-number.png", L"RSP-241492-01"},
+                  {L"due-date-status.png", L"(Friday) 10/16/2026\r\nNot completed yet."},
+                  {L"selected-serial.png", L"36808975"}}})
         {
             const auto path =
                 std::filesystem::path(__FILE__).parent_path() / "fixtures" / "ocr" / filename;
@@ -294,6 +297,15 @@ int wmain()
         };
         const auto dateFixture = loadFixture(L"clipped-date-row.png");
         const auto partFixture = loadFixture(L"hyphenated-part.png");
+        const auto selectedSerial = loadFixture(L"selected-serial.png");
+        for (const auto &tight : {selectedSerial.crop(3, 6, selectedSerial.width - 6, 19),
+                                  selectedSerial.crop(4, 7, selectedSerial.width - 8, 17)})
+        {
+            beginTextRecognition(tight);
+            waitRecognition();
+            require(clipboardText() == L"36808975" && noticeTitle() == L"Text copied",
+                    "A tighter blue selection lost the serial number.");
+        }
         // Windows still confuses the quotes/parentheses in this low-resolution
         // unit label. Report it honestly instead of accepting a fabricated fix.
         const auto quotedText = std::async(std::launch::async, [sample = loadFixture(L"quoted-unit.png")] {
@@ -474,7 +486,7 @@ int wmain()
         shortcuts.join();
     }
     if (!exitCode)
-        std::wcout << L"PASS: built-in Windows OCR, eight exact screen crops (isolated zero excluded), eight small-font/color/weight "
+        std::wcout << L"PASS: built-in Windows OCR, eleven exact screen crops (isolated zero excluded), tight blue serial selections, eight small-font/color/weight "
                      "cases, oversized/canceled inputs, "
                      "exact order number, Unicode and line breaks, no editor "
                      "opening, "

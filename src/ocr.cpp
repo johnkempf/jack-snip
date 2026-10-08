@@ -87,7 +87,8 @@ template <class T> Com<T> factory(const wchar_t *name, const GUID &id)
 }
 
 Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
-                    double smallScale = 3.0)
+                    double smallScale = 3.0, double horizontalScale = 1.0,
+                    bool softenSmallDarkText = false)
 {
     // OCR needs whitespace around a line, even when the user selected it precisely.
     // Add only generated pixels; never read text outside the selected screen area.
@@ -96,8 +97,10 @@ Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
     const bool small = image.height <= 128;
     const double desiredScale = small ? smallScale : 1.0;
     const double scale = std::min(desiredScale, static_cast<double>(available) /
-                                                    std::max(image.width, image.height));
-    const int contentWidth = std::max(1, static_cast<int>(image.width * scale)),
+                                                    std::max(image.width * horizontalScale,
+                                                             static_cast<double>(image.height)));
+    const double scaleX = scale * horizontalScale;
+    const int contentWidth = std::max(1, static_cast<int>(image.width * scaleX)),
               contentHeight = std::max(1, static_cast<int>(image.height * scale));
     const int width = contentWidth + padding * 2, height = contentHeight + padding * 2;
 
@@ -151,7 +154,9 @@ Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
     // Bright bold screen fonts have thick antialiased edges after inversion.
     // Lighten those edges to keep adjacent stems and counters separate. Thin
     // fonts retain their original coverage (especially punctuation and digits).
-    const double gamma = ink && static_cast<double>(solidInk) / ink > .6 ? .25 : 1.0;
+    const double gamma = !invert && softenSmallDarkText                    ? .5
+                         : ink && static_cast<double>(solidInk) / ink > .6 ? .25
+                                                                           : 1.0;
     auto pixels = Bitmap::create(width, height);
     std::fill(pixels.pixels.begin(), pixels.pixels.end(), 255);
     if (!normalize)
@@ -179,7 +184,7 @@ Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
         const double fy = sy - iy;
         for (int x = 0; x < contentWidth; ++x)
         {
-            const double sx = (x + .5) / scale - .5;
+            const double sx = (x + .5) / scaleX - .5;
             const int ix = static_cast<int>(std::floor(sx));
             const double fx = sx - ix;
             auto target =
@@ -303,8 +308,9 @@ std::wstring recognizeText(const Bitmap &image, std::stop_token stop)
     auto layout = analyzeTextRows(image, stop);
     if (stop.stop_requested())
         return {};
-    if (layout.reliable && std::none_of(layout.rows.begin(), layout.rows.end(),
-                                        [](const TextRow &row) { return !row.clipped; }))
+    if (layout.reliable && !layout.rows.empty() &&
+        std::none_of(layout.rows.begin(), layout.rows.end(),
+                     [](const TextRow &row) { return !row.clipped; }))
         return {};
     const auto &source = layout.image.empty() ? image : layout.image;
     Runtime runtime;
@@ -320,14 +326,25 @@ std::wstring recognizeText(const Bitmap &image, std::stop_token stop)
     if (limit < 4 || limit > static_cast<UINT32>(INT_MAX))
         throw std::runtime_error("Windows text recognition returned an invalid image limit.");
     const auto deadline = GetTickCount64() + 15000;
+    int glyphHeight = 0, completeRows = 0;
+    bool condensed = false;
+    for (const auto &row : layout.rows)
+        if (!row.clipped)
+        {
+            glyphHeight = std::max(glyphHeight, row.glyphHeight);
+            condensed |= row.condensed;
+            ++completeRows;
+        }
+    const double horizontalScale = layout.reliable && completeRows == 1 && condensed ? 1.25 : 1.0;
+    const bool smallDarkText = layout.reliable && glyphHeight > 0 && glyphHeight <= 12;
     // Keep the user's original margins: changing line geometry can worsen
     // Windows OCR even with identical letter pixels. Generated padding handles
     // tight selections; clipped neighboring rows have already been removed.
-    auto text = recognizePrepared(engine.get(), prepareImage(source, limit, stop), stop, deadline);
+    auto text = recognizePrepared(
+        engine.get(), prepareImage(source, limit, stop, 3.0, horizontalScale, smallDarkText), stop,
+        deadline);
     if (!text.empty() || stop.stop_requested())
         return stop.stop_requested() ? L"" : text;
-    const auto completeRows = std::count_if(layout.rows.begin(), layout.rows.end(),
-                                            [](const TextRow &row) { return !row.clipped; });
     // Retry a few complete rows only when Windows detected nothing. This helps
     // tiny labels inside a large selection without choosing between conflicting
     // readings, correcting identifiers, or multiplying the operation timeout.
@@ -339,8 +356,11 @@ std::wstring recognizeText(const Bitmap &image, std::stop_token stop)
                 return {};
             if (row.clipped)
                 continue;
-            auto line = recognizePrepared(engine.get(),
-                prepareImage(source.crop(0, row.top, source.width, row.bottom - row.top), limit, stop, 2.0), stop, deadline);
+            auto line = recognizePrepared(
+                engine.get(),
+                prepareImage(source.crop(0, row.top, source.width, row.bottom - row.top), limit,
+                             stop, 2.0, row.condensed ? 1.25 : 1.0, row.glyphHeight <= 12),
+                stop, deadline);
             if (!line.empty())
             {
                 if (!text.empty())

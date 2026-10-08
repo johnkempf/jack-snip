@@ -8,6 +8,8 @@ struct TextRow
 {
     int top = 0, bottom = 0;
     bool clipped = false;
+    int glyphHeight = 0;
+    bool condensed = false;
 };
 struct TextLayout
 {
