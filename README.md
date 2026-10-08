@@ -25,13 +25,18 @@ Saved selections of the retired Orange preset switch to Purple; saved custom col
 
 Click **New snip** and drag a rectangle. Add annotations, then press **Ctrl+C** to copy or **Ctrl+S** to save. See [Quick Start](dist/Quick%20Start.txt) for the controls.
 The capture icon on the welcome screen also starts a snip. **Recent** keeps the last ten captures;
-right-click a thumbnail and choose **Copy** to copy it with annotations without reopening it.
+Right-click the open snip or a Recent thumbnail for **Copy**, **Save**, and **Save As**.
+Recent actions include annotations and export effects without reopening the capture.
 
 **Ctrl+Alt+T** copies text from an area: drag over the text, release, then paste anywhere.
 Recognition runs locally using the built-in Windows OCR engine and your installed
 recognition language; no image is uploaded or separate OCR model bundled.
 Tight selections are padded internally; small text is enlarged and its contrast adjusted
 before recognition, so you do not need to select a large empty area around a label.
+Complete compact lines use consistent recognition margins; field borders, icons, and
+unrelated edge fragments are separated from the text on flat backgrounds.
+Narrow lettering is widened internally; small clipped barcode fragments are separated
+from complete digits before recognition.
 On flat document and app backgrounds, rows with characters cut by a selection edge are
 omitted. Leave a small margin around the complete line you want to copy.
 A small **Text copied** popup previews the exact text for three seconds. Hover to keep it

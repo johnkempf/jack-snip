@@ -21,6 +21,8 @@ Click New snip, drag an area, and release. Pen is selected automatically.
 New captures copy automatically by default. Settings > Auto copy new snips turns this off.
 Ctrl+C copies the current image with all annotations, including edits made after capture.
 Ctrl+S saves a PNG; Ctrl+Shift+S chooses a new filename.
+Right-click the open snip or a Recent thumbnail for Copy, Save, and Save As.
+Recent actions include annotations and export effects without switching the open snip.
 Ctrl+Alt+F instantly captures all monitors and the mouse pointer, preserving hover menus.
 Ctrl+Alt+T copies text: drag over text, release, then paste anywhere.
 Text recognition runs locally using the built-in Windows OCR engine and installed

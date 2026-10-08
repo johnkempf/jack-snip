@@ -4132,28 +4132,79 @@ void copyRecentSnip(int index)
     startCopyFeedback(false);
     status(L"Copied recent snip " + std::to_wstring(snip.sequence) + L" - ready to paste");
 }
+void saveRecentSnip(int index, bool saveAs);
+HMENU snipActionsMenu(bool shortcuts)
+{
+    HMENU menu = CreatePopupMenu();
+    if (menu)
+    {
+        AppendMenuW(menu, MF_STRING, Copy, shortcuts ? L"&Copy\tCtrl+C" : L"&Copy");
+        AppendMenuW(menu, MF_STRING, Save, shortcuts ? L"&Save\tCtrl+S" : L"&Save");
+        AppendMenuW(menu, MF_STRING, SaveAs,
+                    shortcuts ? L"Save &as...\tCtrl+Shift+S" : L"Save &as...");
+        SetMenuDefaultItem(menu, Copy, FALSE);
+    }
+    return menu;
+}
+bool snipContextMenu(POINT point)
+{
+    if (!hasImage() || app.capturePending || app.overlay)
+        return false;
+    const auto content = imageContentRect();
+    const auto a = app.view.toScreen({content.left, content.top});
+    const auto b = app.view.toScreen({content.right, content.bottom});
+    const auto canvas = canvasRect();
+    const Rect visible{std::max(canvas.left, a.x), std::max(canvas.top, a.y),
+                       std::min(canvas.right, b.x), std::min(canvas.bottom, b.y)};
+    if (visible.width() <= 0 || visible.height() <= 0)
+        return false;
+    POINT client = point;
+    if (point.x == -1 && point.y == -1)
+    {
+        client = {static_cast<LONG>((visible.left + visible.right) * app.dpi / 2),
+                  static_cast<LONG>((visible.top + visible.bottom) * app.dpi / 2)};
+        point = client;
+        ClientToScreen(app.window, &point);
+    }
+    else
+        ScreenToClient(app.window, &client);
+    const Point hit{client.x / app.dpi, client.y / app.dpi};
+    if (!visible.contains(hit) ||
+        std::any_of(app.buttons.begin(), app.buttons.end(),
+                    [&](const Button &button) { return button.rect.contains(hit); }))
+        return false;
+    HMENU menu = snipActionsMenu(true);
+    if (!menu)
+        return true;
+    const int choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
+                                      app.window, nullptr);
+    DestroyMenu(menu);
+    if (choice)
+        command(choice);
+    return true;
+}
 void recentContextMenu(POINT point)
 {
     POINT client = point;
     ScreenToClient(app.window, &client);
     const auto button = std::find_if(app.buttons.begin(), app.buttons.end(), [&](const Button &b) {
-        return recentChoice(b.command) && b.rect.contains({client.x / app.dpi, client.y / app.dpi}) &&
-               enabled(b.command);
+        return recentChoice(b.command) &&
+               b.rect.contains({client.x / app.dpi, client.y / app.dpi}) && enabled(b.command);
     });
     if (button == app.buttons.end())
         return;
     const int index = button->command - RecentChoiceFirst;
     app.recentFocus = static_cast<int>(app.recent.size()) - 1 - index;
-    HMENU menu = CreatePopupMenu();
+    HMENU menu = snipActionsMenu(false);
     if (!menu)
         return;
-    AppendMenuW(menu, MF_STRING, Copy, L"&Copy");
-    SetMenuDefaultItem(menu, Copy, FALSE);
     const int choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
                                       app.window, nullptr);
     DestroyMenu(menu);
     if (choice == Copy)
         copyRecentSnip(index);
+    else if (choice == Save || choice == SaveAs)
+        saveRecentSnip(index, choice == SaveAs);
 }
 bool existingFolder(const std::wstring &path)
 {
@@ -4265,6 +4316,36 @@ void saveImage(bool saveAs = false)
     app.dirty = false;
     updateTitle();
     status(L"Saved PNG with all annotations");
+}
+void saveRecentSnip(int index, bool saveAs)
+{
+    if (index < 0 || index >= static_cast<int>(app.recent.size()) || app.capturePending ||
+        app.overlay)
+        return;
+    if (index == app.activeRecent)
+    {
+        finishDrag(true);
+        finishTextEditing();
+        saveImage(saveAs);
+        return;
+    }
+    const auto &snip = app.recent[index];
+    if (snip.image.empty())
+        return;
+    std::wstring path = snip.savePath;
+    const auto sequence = snip.sequence;
+    const auto bitmap =
+        app.graphics.exportImage(snip.image, snip.document.items, app.exportOptions);
+    if ((path.empty() || saveAs) && !chooseSave(path))
+        return;
+    saveBytes(path, app.graphics.png(bitmap));
+    // The modal picker pumps messages; a new capture may have changed Recent.
+    if (index < static_cast<int>(app.recent.size()) && app.recent[index].sequence == sequence)
+    {
+        app.recent[index].savePath = path;
+        app.recent[index].dirty = false;
+    }
+    status(L"Saved recent snip " + std::to_wstring(sequence) + L" as PNG with all annotations");
 }
 void closeSettings()
 {
@@ -6005,6 +6086,8 @@ LRESULT mainMessage(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
             recentContextMenu(point);
             return 0;
         }
+        if (snipContextMenu({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}))
+            return 0;
         if (GET_X_LPARAM(lp) != -1 || GET_Y_LPARAM(lp) != -1)
             paletteMenu({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         return 0;

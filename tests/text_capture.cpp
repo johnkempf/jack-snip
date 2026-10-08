@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <tuple>
 #include <io.h>
 #include <fcntl.h>
 
@@ -240,7 +241,7 @@ int wmain()
         // preprocessing helper. Exact expectations catch lost punctuation and
         // the O/0, l/1 mistakes that padding alone did not fix.
         for (auto [filename, expectedText] :
-             std::array<std::pair<const wchar_t *, const wchar_t *>, 11>{
+             std::array<std::pair<const wchar_t *, const wchar_t *>, 20>{
                  {{L"part-number.png", L"RSP-241492-01"},
                   {L"serialized.png", L"Serialized:"},
                   {L"serial-number.png", L"1301558"},
@@ -251,7 +252,16 @@ int wmain()
                   {L"clipped-date-row.png", L"3/31/2025 2:38 PM"},
                   {L"red-part-number.png", L"RSP-241492-01"},
                   {L"due-date-status.png", L"(Friday) 10/16/2026\r\nNot completed yet."},
-                  {L"selected-serial.png", L"36808975"}}})
+                  {L"selected-serial.png", L"36808975"},
+                  {L"selected-part-margins.png", L"APF6-037-01-04-RA"},
+                  {L"serial-in-field.png", L"2007372"},
+                  {L"red-part-in-frame.png", L"RSP-241492-01"},
+                  {L"serial-with-fragments.png", L"801099"},
+                  {L"condensed-dotted-part.png", L"ADM6-100-01.5-4-A"},
+                  {L"barcode-number.png", L"39919487"},
+                  {L"barcode-number-tight.png", L"36808975"},
+                  {L"small-part-number.png", L"RSP-241492-01"},
+                  {L"selected-serial-focus-border.png", L"36808975"}}})
         {
             const auto path =
                 std::filesystem::path(__FILE__).parent_path() / "fixtures" / "ocr" / filename;
@@ -290,16 +300,62 @@ int wmain()
         require(app.image.pixels == previousPixels && app.recent.size() == recentCount && app.dirty,
                 "Repeated text captures changed the open snip.");
         auto loadFixture = [&](const wchar_t *filename) {
-            const auto path = std::filesystem::path(__FILE__).parent_path() / "fixtures" / "ocr" / filename;
+            const auto path =
+                std::filesystem::path(__FILE__).parent_path() / "fixtures" / "ocr" / filename;
             std::ifstream file(path, std::ios::binary);
             require(file.good(), "Cannot open boundary OCR fixture.");
-            return app.graphics.decode(std::vector<uint8_t>{std::istreambuf_iterator<char>(file), {}});
+            return app.graphics.decode(
+                std::vector<uint8_t>{std::istreambuf_iterator<char>(file), {}});
         };
         const auto dateFixture = loadFixture(L"clipped-date-row.png");
         const auto partFixture = loadFixture(L"hyphenated-part.png");
         const auto selectedSerial = loadFixture(L"selected-serial.png");
+        // Selection boundaries vary from drag to drag. Borders/noise must not
+        // intermittently invalidate a complete line or enter the clipboard.
+        for (auto [filename, expectedText, maximumInset] :
+             std::array<std::tuple<const wchar_t *, const wchar_t *, int>, 9>{
+                 {{L"selected-part-margins.png", L"APF6-037-01-04-RA", 3},
+                  {L"serial-in-field.png", L"2007372", 3},
+                  {L"red-part-in-frame.png", L"RSP-241492-01", 3},
+                  {L"serial-with-fragments.png", L"801099", 3},
+                  {L"condensed-dotted-part.png", L"ADM6-100-01.5-4-A", 2},
+                  {L"barcode-number.png", L"39919487", 2},
+                  {L"barcode-number-tight.png", L"36808975", 2},
+                  {L"small-part-number.png", L"RSP-241492-01", 3},
+                  {L"selected-serial-focus-border.png", L"36808975", 3}}})
+        {
+            const auto sample = loadFixture(filename);
+            std::vector<std::array<int, 4>> edges{{0, 0, 0, 0}};
+            for (int inset = 1; inset <= maximumInset; ++inset)
+            {
+                edges.push_back({inset, inset, inset, inset});
+                edges.push_back({inset, 0, 0, 0});
+                edges.push_back({0, inset, 0, 0});
+                edges.push_back({0, 0, inset, 0});
+                edges.push_back({0, 0, 0, inset});
+            }
+            for (auto [left, top, right, bottom] : edges)
+            {
+                beginTextRecognition(sample.crop(left, top, sample.width - left - right,
+                                                 sample.height - top - bottom));
+                waitRecognition();
+                if (clipboardText() != expectedText || noticeTitle() != L"Text copied")
+                {
+                    std::wcerr << filename << L", edges " << left << L"," << top << L"," << right
+                               << L"," << bottom << L": [" << clipboardText() << L"], notice ["
+                               << noticeTitle() << L"]\n";
+                    throw std::runtime_error(
+                        "A boundary adjustment changed complete text recognition.");
+                }
+            }
+        }
+        const auto focusedSerial = loadFixture(L"selected-serial-focus-border.png");
         for (const auto &tight : {selectedSerial.crop(3, 6, selectedSerial.width - 6, 19),
-                                  selectedSerial.crop(4, 7, selectedSerial.width - 8, 17)})
+                                  selectedSerial.crop(4, 7, selectedSerial.width - 8, 17),
+                                  focusedSerial.crop(0, 7, focusedSerial.width, 20),
+                                  focusedSerial.crop(4, 8, focusedSerial.width - 8, 18),
+                                  focusedSerial.crop(4, 7, focusedSerial.width - 8, 20),
+                                  focusedSerial.crop(4, 6, focusedSerial.width - 8, 22)})
         {
             beginTextRecognition(tight);
             waitRecognition();
@@ -308,21 +364,37 @@ int wmain()
         }
         // Windows still confuses the quotes/parentheses in this low-resolution
         // unit label. Report it honestly instead of accepting a fabricated fix.
-        const auto quotedText = std::async(std::launch::async, [sample = loadFixture(L"quoted-unit.png")] {
-            return recognizeText(sample);
-        }).get();
+        const auto quotedText =
+            std::async(std::launch::async, [sample = loadFixture(L"quoted-unit.png")] {
+                return recognizeText(sample);
+            }).get();
         std::wcout << L"Windows OCR quality diagnostic: quoted-unit.png -> [" << quotedText
                    << L"], target [Each\u2019 (\u2018EA\u2019)]\n";
         const auto clippedSequence = GetClipboardSequenceNumber();
-        for (const auto &partial : {dateFixture.crop(0, 0, dateFixture.width, 4),
-                                    partFixture.crop(0, 0, partFixture.width, 13),
-                                    partFixture.crop(13, 0, partFixture.width - 13, partFixture.height),
-                                    partFixture.crop(0, 0, 107, partFixture.height)})
+        const auto barcode = loadFixture(L"barcode-number.png");
+        const auto narrowPart = loadFixture(L"condensed-dotted-part.png");
+        int partialIndex = 0;
+        for (const auto &partial :
+             {dateFixture.crop(0, 0, dateFixture.width, 4),
+              partFixture.crop(0, 0, partFixture.width, 13),
+              partFixture.crop(13, 0, partFixture.width - 13, partFixture.height),
+              partFixture.crop(0, 0, 107, partFixture.height),
+              barcode.crop(10, 0, barcode.width - 10, barcode.height),
+              barcode.crop(0, 0, 72, barcode.height),
+              narrowPart.crop(8, 0, narrowPart.width - 8, narrowPart.height),
+              narrowPart.crop(0, 0, 113, narrowPart.height),
+              focusedSerial.crop(0, 12, focusedSerial.width, 15)})
         {
             beginTextRecognition(partial);
             waitRecognition();
-            require(noticeTitle() == L"No text found" && GetClipboardSequenceNumber() == clippedSequence,
+            if (noticeTitle() != L"No text found" ||
+                GetClipboardSequenceNumber() != clippedSequence)
+                std::wcerr << L"Cut row " << partialIndex << L" -> [" << clipboardText()
+                           << L"], notice [" << noticeTitle() << L"]\n";
+            require(noticeTitle() == L"No text found" &&
+                        GetClipboardSequenceNumber() == clippedSequence,
                     "A cut-off text row produced invented characters or changed the clipboard.");
+            ++partialIndex;
         }
         // A larger selection around one row must preserve the same part number.
         auto roomy = Bitmap::create(partFixture.width + 40, 200);
@@ -337,7 +409,19 @@ int wmain()
             std::wcerr << L"Roomy single-line actual: [" << clipboardText() << L"]\n";
         require(clipboardText() == L"APF6-037-01-04-RA" && noticeTitle() == L"Text copied",
                 "A larger margin changed single-line part-number recognition.");
-        std::wcout << L"PASS: clipped top/bottom/left/right rows omitted; roomy single-line identifier preserved\n";
+        std::wcout << L"PASS: clipped top/bottom/left/right rows omitted; roomy single-line "
+                      L"identifier preserved\n";
+        auto roomyNarrow = Bitmap::create(narrowPart.width + 40, 200);
+        std::fill(roomyNarrow.pixels.begin(), roomyNarrow.pixels.end(), 255);
+        for (int y = 0; y < narrowPart.height; ++y)
+            std::memcpy(
+                &roomyNarrow.pixels[(static_cast<size_t>(y + 80) * roomyNarrow.width + 20) * 4],
+                &narrowPart.pixels[static_cast<size_t>(y) * narrowPart.width * 4],
+                static_cast<size_t>(narrowPart.width) * 4);
+        beginTextRecognition(roomyNarrow);
+        waitRecognition();
+        require(clipboardText() == L"ADM6-100-01.5-4-A" && noticeTitle() == L"Text copied",
+                "A larger selection lost the narrow identifier's punctuation.");
         // Cover other fonts/weights and panel colors rather than tuning only the
         // supplied screenshots. Thin light text must not lose punctuation/digits
         // when the bold-text edge adjustment is applied.
@@ -345,17 +429,19 @@ int wmain()
             for (bool bold : {false, true})
                 for (bool lightText : {false, true})
                 {
-                    const std::wstring label = L"Order number 123425-5";
-                    beginTextRecognition(smallTextSample(
-                        label, fontHeight, bold, lightText ? RGB(255, 255, 255) : RGB(0, 0, 0),
-                        lightText ? RGB(139, 84, 24) : RGB(255, 255, 255)));
-                    waitRecognition();
-                    if (clipboardText() != label || noticeTitle() != L"Text copied")
+                    for (const std::wstring label : {L"Order number 123425-5", L"123425-5"})
                     {
-                        std::wcerr << L"Small font " << fontHeight << L", bold " << bold
-                                   << L", light text " << lightText << L": [" << clipboardText()
-                                   << L"]\n";
-                        throw std::runtime_error("Small-font OCR changed the order number.");
+                        beginTextRecognition(smallTextSample(
+                            label, fontHeight, bold, lightText ? RGB(255, 255, 255) : RGB(0, 0, 0),
+                            lightText ? RGB(139, 84, 24) : RGB(255, 255, 255)));
+                        waitRecognition();
+                        if (clipboardText() != label || noticeTitle() != L"Text copied")
+                        {
+                            std::wcerr << L"Small font " << fontHeight << L", bold " << bold
+                                       << L", light text " << lightText << L": [" << clipboardText()
+                                       << L"]\n";
+                            throw std::runtime_error("Small-font OCR changed the order number.");
+                        }
                     }
                 }
         auto oversized = Bitmap::create(3600, 220);
@@ -486,13 +572,15 @@ int wmain()
         shortcuts.join();
     }
     if (!exitCode)
-        std::wcout << L"PASS: built-in Windows OCR, eleven exact screen crops (isolated zero excluded), tight blue serial selections, eight small-font/color/weight "
-                     "cases, oversized/canceled inputs, "
-                     "exact order number, Unicode and line breaks, no editor "
-                     "opening, "
-                     "snip retention, blank/cancel/busy/newer-copy clipboard retention, "
-                     "nonactivating preview and dismissal, "
-                     "three shortcut conflicts/rollback/swap/disable/persistence. User clipboard "
-                     "untouched.\n";
+        std::wcout << L"PASS: built-in Windows OCR, twenty exact screen crops (isolated zero "
+                      L"excluded), 129 border/fragment selection variants, tight blue serial "
+                      L"selections, sixteen small-font/color/weight "
+                      "cases, oversized/canceled inputs, "
+                      "exact order number, Unicode and line breaks, no editor "
+                      "opening, "
+                      "snip retention, blank/cancel/busy/newer-copy clipboard retention, "
+                      "nonactivating preview and dismissal, "
+                      "three shortcut conflicts/rollback/swap/disable/persistence. User clipboard "
+                      "untouched.\n";
     return exitCode;
 }

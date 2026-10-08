@@ -4,8 +4,11 @@
 #include <cstring>
 #include <iostream>
 #include <thread>
+#include <fstream>
+#include <iterator>
 
 bool recentCopyMenuSeen = false;
+int snipMenuChoice = Copy;
 LRESULT CALLBACK driveRecentCopyMenu(int code, WPARAM wp, LPARAM lp)
 {
     if (code >= 0)
@@ -14,8 +17,9 @@ LRESULT CALLBACK driveRecentCopyMenu(int code, WPARAM wp, LPARAM lp)
         if (message->message == WM_INITMENUPOPUP)
         {
             const auto menu = reinterpret_cast<HMENU>(message->wParam);
-            recentCopyMenuSeen = GetMenuItemCount(menu) == 1 && GetMenuItemID(menu, 0) == Copy;
-            PostMessageW(message->hwnd, WM_CHAR, L'c', 0);
+            recentCopyMenuSeen = GetMenuItemCount(menu) == 3 && GetMenuItemID(menu, 0) == Copy &&
+                                 GetMenuItemID(menu, 1) == Save && GetMenuItemID(menu, 2) == SaveAs;
+            PostMessageW(message->hwnd, WM_CHAR, snipMenuChoice == Copy ? L'c' : L's', 0);
         }
     }
     return CallNextHookEx(nullptr, code, wp, lp);
@@ -103,6 +107,26 @@ int wmain()
                 match = false;
             CloseClipboard();
             require(match, "Clipboard pixels/PNG do not match the current export.");
+        };
+        auto contextAction = [&](POINT point, int choice) {
+            snipMenuChoice = choice;
+            recentCopyMenuSeen = false;
+            const auto hook = SetWindowsHookExW(WH_CALLWNDPROC, driveRecentCopyMenu, nullptr,
+                                                GetCurrentThreadId());
+            require(hook != nullptr, "Cannot drive snip context menu.");
+            SetTimer(app.window, 12345, 2000, cancelStalledRecentMenu);
+            SendMessageW(app.window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(app.window),
+                         MAKELPARAM(point.x, point.y));
+            KillTimer(app.window, 12345);
+            UnhookWindowsHookEx(hook);
+            require(recentCopyMenuSeen, "Snip right-click did not offer Copy, Save and Save As.");
+        };
+        auto savedMatches = [&](const std::wstring &path, const Bitmap &expected) {
+            std::ifstream file(std::filesystem::path(path), std::ios::binary);
+            require(file.good(), "Context-menu Save did not create a PNG.");
+            const std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(file), {}};
+            require(bytes == app.graphics.png(expected),
+                    "Context-menu Save lost annotations or export effects.");
         };
         acceptCapture(image);
         clipboardMatches(renderedExport());
@@ -201,6 +225,25 @@ int wmain()
         for (int layout : {InterfaceClassic, InterfaceOrange})
         {
             command(layout);
+            const auto liveExport = renderedExport();
+            const auto liveItems = app.document.items;
+            const auto liveTool = app.tool;
+            const auto canvas = canvasRect();
+            const auto point = app.view.toScreen({app.image.width / 2.f, app.image.height / 2.f});
+            require(canvas.contains(point), "Snip is not visible for context-menu test.");
+            POINT canvasPoint{static_cast<LONG>(point.x * app.dpi),
+                              static_cast<LONG>(point.y * app.dpi)};
+            ClientToScreen(app.window, &canvasPoint);
+            contextAction(canvasPoint, Copy);
+            clipboardMatches(liveExport);
+            app.savePath = (std::filesystem::current_path() /
+                            (L"context-current-" + std::to_wstring(layout) + L".png"))
+                               .wstring();
+            app.dirty = true;
+            contextAction({-1, -1}, Save);
+            savedMatches(app.savePath, liveExport);
+            require(!app.dirty && app.document.items == liveItems && app.tool == liveTool,
+                    "Snip context actions changed the document or drawing tool.");
             command(RecentSnips);
             require(app.recentOpen, "Recent snips did not open.");
             app.document.begin();
@@ -218,31 +261,30 @@ int wmain()
             app.exportOptions.professionalRounded = true;
             resetPreview();
             const auto &saved = app.recent[0];
-            const auto expected = app.graphics.exportImage(saved.image, saved.document.items,
-                                                           app.exportOptions);
-            const auto recentButton = std::find_if(app.buttons.begin(), app.buttons.end(), [](const Button &b) {
-                return b.command == RecentChoiceFirst;
-            });
+            const auto expected =
+                app.graphics.exportImage(saved.image, saved.document.items, app.exportOptions);
+            const auto recentButton =
+                std::find_if(app.buttons.begin(), app.buttons.end(),
+                             [](const Button &b) { return b.command == RecentChoiceFirst; });
             require(recentButton != app.buttons.end(), "Saved Recent thumbnail is missing.");
             POINT menuPoint{static_cast<LONG>((recentButton->rect.left + 12) * app.dpi),
                             static_cast<LONG>((recentButton->rect.top + 12) * app.dpi)};
             ClientToScreen(app.window, &menuPoint);
-            recentCopyMenuSeen = false;
-            const auto hook = SetWindowsHookExW(WH_CALLWNDPROC, driveRecentCopyMenu, nullptr,
-                                               GetCurrentThreadId());
-            require(hook != nullptr, "Cannot drive Recent context menu.");
-            SetTimer(app.window, 12345, 2000, cancelStalledRecentMenu);
-            SendMessageW(app.window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(app.window),
-                         MAKELPARAM(menuPoint.x, menuPoint.y));
-            KillTimer(app.window, 12345);
-            UnhookWindowsHookEx(hook);
-            require(recentCopyMenuSeen, "Recent right-click did not offer Copy.");
+            contextAction(menuPoint, Copy);
             clipboardMatches(expected);
-            require(app.recentOpen && app.activeRecent == current && app.dirty &&
-                        app.image.pixels == currentImage.pixels && app.document.items == currentItems &&
-                        app.document.selected == currentSelection && app.document.canUndo() &&
-                        app.view.origin == currentView.origin && app.view.scale == currentView.scale,
-                    "Copying a recent capture altered the live capture or closed Recent.");
+            app.recent[0].savePath = (std::filesystem::current_path() /
+                                      (L"context-recent-" + std::to_wstring(layout) + L".png"))
+                                         .wstring();
+            app.recent[0].dirty = true;
+            contextAction(menuPoint, Save);
+            savedMatches(app.recent[0].savePath, expected);
+            require(!app.recent[0].dirty, "Saving Recent did not remember its saved state.");
+            require(
+                app.recentOpen && app.activeRecent == current && app.dirty &&
+                    app.image.pixels == currentImage.pixels && app.document.items == currentItems &&
+                    app.document.selected == currentSelection && app.document.canUndo() &&
+                    app.view.origin == currentView.origin && app.view.scale == currentView.scale,
+                "Copying a recent capture altered the live capture or closed Recent.");
             copyRecentSnip(current);
             clipboardMatches(renderedExport());
             require(app.recentOpen && app.activeRecent == current && !app.dirty,
@@ -318,7 +360,9 @@ int wmain()
                      "selection "
                      "captures, PNG/DIB export, already-copied snip Ctrl+C and repeated copy, "
                      "inert plain letters, annotations, disabled capture, "
-                     "direct Recent PNG/DIB copy with annotations and export effects, live edit retention, "
+                     "right-click canvas Copy/Save and keyboard context menu, direct Recent "
+                     "Copy/Save with annotations and export effects, live edit "
+                     "retention, "
                      "cancel/Recent/diagnostic isolation, busy clipboard retention and retry. User "
                      "clipboard untouched.\n";
     }

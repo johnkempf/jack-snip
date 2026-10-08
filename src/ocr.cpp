@@ -88,7 +88,7 @@ template <class T> Com<T> factory(const wchar_t *name, const GUID &id)
 
 Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
                     double smallScale = 3.0, double horizontalScale = 1.0,
-                    bool softenSmallDarkText = false)
+                    bool softenSmallDarkText = false, bool forceGrayscale = false)
 {
     // OCR needs whitespace around a line, even when the user selected it precisely.
     // Add only generated pixels; never read text outside the selected screen area.
@@ -136,8 +136,9 @@ Bitmap prepareImage(const Bitmap &image, UINT32 limit, std::stop_token stop,
     size_t backgroundPixels = 0;
     for (int gray = std::max(0, background - 8); gray <= std::min(255, background + 8); ++gray)
         backgroundPixels += histogram[gray];
-    const bool normalize = small && high > low &&
-                           backgroundPixels >= static_cast<size_t>(image.width) * image.height / 2;
+    const bool normalize =
+        small && high > low &&
+        (forceGrayscale || backgroundPixels >= static_cast<size_t>(image.width) * image.height / 2);
     const bool invert = background < (low + high) / 2;
     size_t ink = 0, solidInk = 0;
     if (normalize && invert)
@@ -306,6 +307,41 @@ std::wstring recognizeText(const Bitmap &image, std::stop_token stop)
     if (image.empty() || stop.stop_requested())
         return {};
     auto layout = analyzeTextRows(image, stop);
+    // ClearType fringes can join narrow letters and nearby barcode fragments.
+    // Inspect strong grayscale strokes as a second layout, without changing the
+    // successful general path for ordinary colored labels and multi-line content.
+    if (!stop.stop_requested())
+    {
+        int originalHeight = 0;
+        bool originalCondensed = false;
+        int originalComplete = 0;
+        for (const auto &row : layout.rows)
+        {
+            originalHeight = std::max(originalHeight, row.glyphHeight);
+            originalCondensed |= row.condensed;
+            originalComplete += !row.clipped && row.glyphHeight >= 6;
+        }
+        TextLayout core;
+        const bool smallLine = layout.reliable && originalHeight >= 15 && originalHeight <= 128 &&
+                               originalComplete <= 1;
+        const bool uncertainSmall = !layout.reliable && image.height <= 128;
+        if ((smallLine || uncertainSmall) && !originalCondensed)
+            core = analyzeTextRows(image, stop, true);
+        const TextRow *complete = nullptr;
+        int completeCount = 0;
+        for (const auto &row : core.rows)
+            if (!row.clipped)
+            {
+                complete = &row;
+                ++completeCount;
+            }
+        if (core.reliable && completeCount == 1 && complete->compact &&
+            ((!originalCondensed && complete->veryCondensed) ||
+             (core.removedEdgeFragment && complete->glyphHeight < originalHeight)))
+            layout = std::move(core);
+        else if (!layout.reliable && core.reliable && !core.rows.empty() && !completeCount)
+            layout = std::move(core);
+    }
     if (stop.stop_requested())
         return {};
     if (layout.reliable && !layout.rows.empty() &&
@@ -327,22 +363,42 @@ std::wstring recognizeText(const Bitmap &image, std::stop_token stop)
         throw std::runtime_error("Windows text recognition returned an invalid image limit.");
     const auto deadline = GetTickCount64() + 15000;
     int glyphHeight = 0, completeRows = 0;
-    bool condensed = false;
+    bool condensed = false, veryCondensed = false;
     for (const auto &row : layout.rows)
         if (!row.clipped)
         {
             glyphHeight = std::max(glyphHeight, row.glyphHeight);
             condensed |= row.condensed;
+            veryCondensed |= row.veryCondensed;
             ++completeRows;
         }
-    const double horizontalScale = layout.reliable && completeRows == 1 && condensed ? 1.25 : 1.0;
+    const double horizontalScale =
+        layout.reliable && completeRows == 1 && condensed ? (veryCondensed ? 1.75 : 1.25) : 1.0;
     const bool smallDarkText = layout.reliable && glyphHeight > 0 && glyphHeight <= 12;
-    // Keep the user's original margins: changing line geometry can worsen
-    // Windows OCR even with identical letter pixels. Generated padding handles
-    // tight selections; clipped neighboring rows have already been removed.
-    auto text = recognizePrepared(
-        engine.get(), prepareImage(source, limit, stop, 3.0, horizontalScale, smallDarkText), stop,
-        deadline);
+    Bitmap line;
+    if (layout.reliable && completeRows == 1)
+        for (const auto &row : layout.rows)
+            if (!row.clipped && row.compact)
+                line = source.crop(row.left, row.inkTop, row.right - row.left,
+                                   row.inkBottom - row.inkTop);
+    // Give a single compact line consistent geometry, independent of drag
+    // margins, field borders, or surrounding panel colors. Padding is generated
+    // from the selection; no pixels outside it are captured. Keep multi-line
+    // layout intact and retry the original margins only if the line finds nothing.
+    std::wstring text;
+    if (!line.empty())
+        // Nine-pixel screen text needs more samples to distinguish a narrow
+        // digit and hyphen from a joined letter. Larger fonts retain their
+        // established scale; no recognized characters are rewritten.
+        text = recognizePrepared(engine.get(),
+                                 prepareImage(line, limit, stop,
+                                              veryCondensed || glyphHeight <= 10 ? 3.0 : 2.0,
+                                              horizontalScale, smallDarkText, veryCondensed),
+                                 stop, deadline);
+    if (text.empty() && !stop.stop_requested())
+        text = recognizePrepared(
+            engine.get(), prepareImage(source, limit, stop, 3.0, horizontalScale, smallDarkText),
+            stop, deadline);
     if (!text.empty() || stop.stop_requested())
         return stop.stop_requested() ? L"" : text;
     // Retry a few complete rows only when Windows detected nothing. This helps
