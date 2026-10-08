@@ -124,20 +124,24 @@ SettingsPanelLayout settingsPanelLayout()
             app.settingsRecording == SettingsAreaKey
                 ? L"Press a shortcut \u00B7 Esc cancels \u00B7 Backspace disables"
                 : hotkeyName(app.hotkey),
-            82);
+            64);
         row(SettingsAllKey, SettingsControlKind::Button, L"Capture all monitors",
             app.settingsRecording == SettingsAllKey
                 ? L"Press a shortcut \u00B7 Esc cancels \u00B7 Backspace disables"
                 : hotkeyName(app.instantHotkey),
-            82);
+            64);
+        row(SettingsTextKey, SettingsControlKind::Button, L"Copy text from an area",
+            app.settingsRecording == SettingsTextKey
+                ? L"Press a shortcut \u00B7 Esc cancels \u00B7 Backspace disables"
+                : hotkeyName(app.textHotkey),
+            64);
         row(0, SettingsControlKind::Text, L"Click a shortcut to change it.",
             L"Use a single key or Ctrl/Alt/Shift/Win + key. Global shortcuts override "
-            L"other apps. F12 is reserved.", 90);
-        row(0, SettingsControlKind::Text, L"Print Screen",
-            L"If Windows opens its own capture tool, turn off the Print Screen shortcut "
-            L"in Windows Settings > Accessibility > Keyboard.", 90);
+            L"other apps. F12 is reserved.\n\n"
+            L"If Print Screen opens Windows' capture tool, turn off its shortcut in "
+            L"Windows Settings > Accessibility > Keyboard.", 126);
         row(AutoCopy, SettingsControlKind::Toggle, L"Auto copy new snips",
-            L"New captures go straight to the clipboard.");
+            L"Image captures copy automatically. Text always copies with a preview.");
         break;
     case 3: {
         const size_t borderGroup = l.controls.size();
@@ -191,11 +195,13 @@ SettingsPanelLayout settingsPanelLayout()
         row(Actual, SettingsControlKind::Button, L"Actual size (100%)", L"Show one image pixel per screen pixel.", 56);
         break;
     case 5:
-        for (auto [id, label] : std::array<std::pair<int, const wchar_t *>, 13>{
+        for (auto [id, label] : std::array<std::pair<int, const wchar_t *>, 15>{
                  {{NewSnip, L"New snip"},
                   {InstantSnip, L"Capture all monitors"},
+                  {TextSnip, L"Copy text from an area"},
                   {RecentSnips, L"Recent snips"},
                   {Copy, L"Copy image"},
+                  {CopySnipText, L"Copy text from snip"},
                   {Save, L"Save PNG"},
                   {SaveAs, L"Save as"},
                   {Undo, L"Undo"},

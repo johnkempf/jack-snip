@@ -27,6 +27,23 @@ Click **New snip** and drag a rectangle. Add annotations, then press **Ctrl+C** 
 The capture icon on the welcome screen also starts a snip. **Recent** keeps the last ten captures;
 right-click a thumbnail and choose **Copy** to copy it with annotations without reopening it.
 
+**Ctrl+Alt+T** copies text from an area: drag over the text, release, then paste anywhere.
+Recognition runs locally; no image is uploaded. Compact English text rows use a bundled
+Tesseract engine and English model. Larger passages and other Windows UI languages use
+Windows OCR with your installed recognition language.
+Tight selections are padded internally; small text is enlarged and its contrast adjusted
+before recognition, so you do not need to select a large empty area around a label.
+On flat document and app backgrounds, rows with characters cut by a selection edge are
+omitted. Leave a small margin around the complete line you want to copy.
+A small **Text copied** popup previews the exact text for three seconds. Hover to keep it
+visible; click to dismiss. Long previews are shortened, while the clipboard contains all
+recognized lines. **Esc** cancels; a selection with no text leaves your clipboard unchanged.
+The editor and current snip are preserved. Change or disable this shortcut under
+**Settings → Capture**, or in the tray's **Keyboard shortcuts** dialog. The capture menu
+also offers **Copy text from an area**; **Settings → Actions → Copy text from snip** extracts
+text from the current screenshot. OCR can confuse small or blurry characters, so check
+the preview for exact identifiers and zoom in before selecting when needed.
+
 **Settings → Toolbar layout** switches immediately between **Top toolbars** (the original ribbon)
 and **Side panels** (the tool rail and properties panel). The choice and each layout's visibility
 settings are remembered. Switching keeps the current image, annotations, selection and undo history.
@@ -84,6 +101,13 @@ Using the toolchain described in [BUILD-TOOLCHAIN.md](BUILD-TOOLCHAIN.md):
 .\build.ps1 -Test
 .\package.ps1
 ```
+
+The first build downloads hash-pinned Tesseract 5.5.3 and Leptonica 1.87.0 sources
+and compiles them statically. Subsequent builds reuse the local `.tools/ocr` cache.
+CMake builds use the same pinned sources. The English `tessdata_fast` model is
+embedded in the executable (SHA-256 `7D4322BD2A7749724879683FC3912CB542F19906C83BCC1A52132556427170B2`).
+The app needs no separate OCR installation. Tesseract and its English model use
+the Apache 2.0 license; Leptonica uses its BSD license. Their notices ship with the installer.
 
 ## Support
 

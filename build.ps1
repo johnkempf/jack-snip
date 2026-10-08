@@ -11,7 +11,9 @@ if (-not $CompilerDirectory -or -not (Test-Path -LiteralPath (Join-Path $Compile
 }
 $taskCompiler = Join-Path $CompilerDirectory 'clang++.exe'
 $taskResourceCompiler = Join-Path $CompilerDirectory 'llvm-windres.exe'
-$taskSources = @('model', 'graphics', 'windows_support', 'settings', 'color_picker', 'capture', 'clipboard', 'file_io', 'test_reports') |
+& (Join-Path $taskRoot 'scripts\prepare-ocr.ps1') -CompilerDirectory $CompilerDirectory
+$taskOcrLibraries = @((Join-Path $taskRoot '.tools\ocr\lib\libtesseract.a'), (Join-Path $taskRoot '.tools\ocr\lib\libleptonica.a'))
+$taskSources = @('model', 'graphics', 'windows_support', 'settings', 'color_picker', 'capture', 'clipboard', 'file_io', 'test_reports', 'ocr', 'ocr_layout', 'ocr_local', 'text_notice') |
     ForEach-Object { Join-Path $taskRoot "src\$_.cpp" }
 $taskBuild = Join-Path $taskRoot 'build'
 $taskDist = Join-Path $taskRoot 'dist'
@@ -24,18 +26,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Resource compilation failed.' }
 } finally { Pop-Location }
 $taskArguments = @('-std=c++20','-Os','-Wall','-Wextra','-Wpedantic','-DUNICODE','-D_UNICODE','-DWIN32_LEAN_AND_MEAN','-DNOMINMAX','-D_WIN32_WINNT=0x0A00',
-    (Join-Path $taskRoot 'src\main.cpp')) + $taskSources + @((Join-Path $taskBuild 'app.res.o'),
+    (Join-Path $taskRoot 'src\main.cpp')) + $taskSources + @((Join-Path $taskBuild 'app.res.o')) + $taskOcrLibraries + @(
     '-o',(Join-Path $taskDist $OutputName),'-municode','-mwindows','-static','-Wl,--nxcompat','-Wl,--dynamicbase','-Wl,--high-entropy-va','-s',
-    '-ld2d1','-ldwrite','-lwindowscodecs','-lole32','-luser32','-lgdi32','-lcomdlg32','-lcomctl32','-lshell32','-ladvapi32','-ldwmapi','-luuid')
+    '-ld2d1','-ldwrite','-lwindowscodecs','-lole32','-luser32','-lgdi32','-lcomdlg32','-lcomctl32','-lshell32','-ladvapi32','-ldwmapi','-luuid','-lruntimeobject','-lws2_32')
 & $taskCompiler @taskArguments
 if ($LASTEXITCODE -ne 0) { throw 'C++ compilation failed.' }
 & (Join-Path $taskRoot 'scripts\write-build-record.ps1') -CompilerDirectory $CompilerDirectory -OutputName $OutputName -Arguments $taskArguments
 Get-Item -LiteralPath (Join-Path $taskDist $OutputName) | Select-Object FullName, Length, LastWriteTime
-Copy-Item -LiteralPath (Join-Path $taskRoot 'resources\licenses\LLVM.txt'), (Join-Path $taskRoot 'resources\licenses\MinGW-runtime.txt') -Destination $taskDist
+Copy-Item -Path (Join-Path $taskRoot 'resources\licenses\*.txt') -Destination $taskDist
 if ($Test) {
     $taskClipboardArguments = @('-std=c++20','-Os','-Wall','-Wextra','-Wpedantic','-DUNICODE','-D_UNICODE','-DWIN32_LEAN_AND_MEAN','-DNOMINMAX','-D_WIN32_WINNT=0x0A00',
-        '-I',(Join-Path $taskRoot 'src'),(Join-Path $taskRoot 'tests\clipboard.cpp')) + $taskSources + @((Join-Path $taskBuild 'app.res.o'),
-        '-o',(Join-Path $taskBuild 'clipboard_test.exe'),'-municode','-static','-s','-ld2d1','-ldwrite','-lwindowscodecs','-lole32','-luser32','-lgdi32','-ladvapi32','-lcomctl32','-lshell32','-luuid')
+        '-I',(Join-Path $taskRoot 'src'),(Join-Path $taskRoot 'tests\clipboard.cpp')) + $taskSources + @((Join-Path $taskBuild 'app.res.o')) + $taskOcrLibraries + @(
+        '-o',(Join-Path $taskBuild 'clipboard_test.exe'),'-municode','-static','-s','-ld2d1','-ldwrite','-lwindowscodecs','-lole32','-luser32','-lgdi32','-ladvapi32','-lcomctl32','-lshell32','-luuid','-lruntimeobject','-lws2_32')
     & $taskCompiler @taskClipboardArguments
     if ($LASTEXITCODE -ne 0) { throw 'Clipboard test compilation failed.' }
     $taskAutoCopyArguments = @($taskArguments)
@@ -64,6 +66,11 @@ if ($Test) {
     $taskTextArguments[$taskTextArguments.IndexOf((Join-Path $taskBuild 'autocopy_test.exe'))] = Join-Path $taskBuild 'text_edit_test.exe'
     & $taskCompiler @taskTextArguments
     if ($LASTEXITCODE -ne 0) { throw 'Text editing test compilation failed.' }
+    $taskTextCaptureArguments = @($taskAutoCopyArguments)
+    $taskTextCaptureArguments[$taskTextCaptureArguments.IndexOf((Join-Path $taskRoot 'tests\autocopy.cpp'))] = Join-Path $taskRoot 'tests\text_capture.cpp'
+    $taskTextCaptureArguments[$taskTextCaptureArguments.IndexOf((Join-Path $taskBuild 'autocopy_test.exe'))] = Join-Path $taskBuild 'text_capture_test.exe'
+    & $taskCompiler @taskTextCaptureArguments
+    if ($LASTEXITCODE -ne 0) { throw 'Text capture test compilation failed.' }
     $taskUIArguments = @($taskAutoCopyArguments)
     $taskUIArguments[$taskUIArguments.IndexOf((Join-Path $taskRoot 'tests\autocopy.cpp'))] = Join-Path $taskRoot 'tests\ui.cpp'
     $taskUIArguments[$taskUIArguments.IndexOf((Join-Path $taskBuild 'autocopy_test.exe'))] = Join-Path $taskBuild 'ui_test.exe'
@@ -79,7 +86,8 @@ if ($Test) {
     $taskInstanceArguments[$taskInstanceArguments.IndexOf((Join-Path $taskBuild 'clipboard_test.exe'))] = Join-Path $taskBuild 'single_instance_test.exe'
     & $taskCompiler @taskInstanceArguments
     if ($LASTEXITCODE -ne 0) { throw 'Single-instance test compilation failed.' }
-    $taskRunRoot = Join-Path $taskBuild ('test-output\' + [guid]::NewGuid().ToString())
+    # Short IDs leave room for transactional settings filenames on deep checkouts.
+    $taskRunRoot = Join-Path $taskBuild ('t\' + [guid]::NewGuid().ToString('N').Substring(0, 12))
     New-Item -ItemType Directory -Path $taskRunRoot | Out-Null
     Push-Location $taskRunRoot
     try {
@@ -100,6 +108,8 @@ if ($Test) {
         if ($LASTEXITCODE -ne 0) { throw 'Robustness test failed.' }
         & (Join-Path $taskBuild 'text_edit_test.exe')
         if ($LASTEXITCODE -ne 0) { throw 'Text editing test failed.' }
+        & (Join-Path $taskBuild 'text_capture_test.exe')
+        if ($LASTEXITCODE -ne 0) { throw 'Text capture test failed.' }
         & (Join-Path $taskBuild 'ui_test.exe')
         if ($LASTEXITCODE -ne 0) { throw 'UI test failed.' }
         & (Join-Path $taskBuild 'native_menu_test.exe')

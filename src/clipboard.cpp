@@ -5,6 +5,38 @@
 
 namespace snip
 {
+bool copyText(HWND owner, const std::wstring &text, ClipboardFailure *failure)
+{
+    if (text.empty())
+        return false;
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!memory)
+        throw std::runtime_error("Not enough memory to copy the text.");
+    void *data = GlobalLock(memory);
+    if (!data)
+    {
+        GlobalFree(memory);
+        throwWindowsError("Cannot prepare the text clipboard.");
+    }
+    std::memcpy(data, text.c_str(), bytes);
+    GlobalUnlock(memory);
+    if (!OpenClipboard(owner))
+    {
+        if (failure)
+            *failure = {"Clipboard is busy. Try the text snip again.", GetLastError(), true};
+        GlobalFree(memory);
+        return false;
+    }
+    const bool success = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, memory);
+    if (!success && failure)
+        *failure = {"Cannot copy text to the clipboard.", GetLastError(), false};
+    CloseClipboard();
+    if (!success)
+        GlobalFree(memory);
+    return success;
+}
+
 bool copyBitmap(HWND owner, const Bitmap &bitmap, const std::vector<uint8_t> &png,
                 ClipboardFailure *failure)
 {

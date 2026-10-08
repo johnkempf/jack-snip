@@ -19,4 +19,12 @@ Build, test, and package:
 
 The output is `dist/Tiger Snip.exe` and `dist/Tiger Snip Setup.msi`. The C++ runtime is statically linked; Windows provides the system graphics libraries. Runtime notices are included in the installer.
 
+`scripts/prepare-ocr.ps1` prepares CMake 3.31.6 and builds the pinned Tesseract
+5.5.3 and Leptonica 1.87.0 source archives in `.tools/ocr`. The first build needs
+internet access; later builds reuse that cache. Archive hashes and options are
+in `cmake/OcrDependencies.cmake` and the preparation script. Both engines are
+static libraries, with networking, training tools, legacy OCR, and external
+image codecs disabled. The checked-in English model is embedded in the executable.
+The build record includes the static library hashes and all model/license inputs.
+
 `Tiger Snip Build.json` records the compiler, build options, source hashes, and executable hash. Packaging checks these hashes. `Tiger Snip Release.txt` records the installer and payload hashes.

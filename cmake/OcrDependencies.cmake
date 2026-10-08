@@ -1,0 +1,62 @@
+# Pinned source archives. Recognition is linked statically and runs offline.
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(SW_BUILD OFF CACHE BOOL "" FORCE)
+foreach(feature ZLIB PNG GIF JPEG TIFF WEBP OPENJPEG)
+  set(ENABLE_${feature} OFF CACHE BOOL "" FORCE)
+endforeach()
+FetchContent_Declare(snip_leptonica
+  URL https://codeload.github.com/DanBloomberg/leptonica/zip/refs/tags/1.87.0
+  URL_HASH SHA256=2CFB7EBE6036F3D017280FA9A000C9699AB28BE8DFF8BE8E2E948E2C79917EDA)
+FetchContent_MakeAvailable(snip_leptonica)
+target_compile_definitions(leptonica PRIVATE NO_CONSOLE_IO)
+# Leptonica's MinGW static target otherwise gets a misleading .dll suffix.
+set_target_properties(leptonica PROPERTIES PREFIX "lib" SUFFIX ".a" OUTPUT_NAME leptonica)
+set(_snip_lept_config "${CMAKE_CURRENT_BINARY_DIR}/snip-leptonica-config")
+file(MAKE_DIRECTORY "${_snip_lept_config}")
+file(WRITE "${_snip_lept_config}/LeptonicaConfig.cmake"
+  "set(Leptonica_FOUND TRUE)\nset(Leptonica_VERSION 1.87.0)\nset(Leptonica_LIBRARIES leptonica)\nset(Leptonica_INCLUDE_DIRS \"${snip_leptonica_SOURCE_DIR}/src;${snip_leptonica_BINARY_DIR}/src\")\n")
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file("${_snip_lept_config}/LeptonicaConfigVersion.cmake"
+  VERSION 1.87.0 COMPATIBILITY AnyNewerVersion)
+set(Leptonica_DIR "${_snip_lept_config}" CACHE PATH "" FORCE)
+set(BUILD_TRAINING_TOOLS OFF CACHE BOOL "" FORCE)
+set(DISABLED_LEGACY_ENGINE ON CACHE BOOL "" FORCE)
+set(GRAPHICS_DISABLED ON CACHE BOOL "" FORCE)
+set(DISABLE_TIFF ON CACHE BOOL "" FORCE)
+set(DISABLE_ARCHIVE ON CACHE BOOL "" FORCE)
+set(DISABLE_CURL ON CACHE BOOL "" FORCE)
+set(ENABLE_NATIVE OFF CACHE BOOL "" FORCE)
+set(ENABLE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(snip_tesseract
+  URL https://codeload.github.com/tesseract-ocr/tesseract/zip/refs/tags/5.5.3
+  URL_HASH SHA256=697D7BF55B53A6C90F5041FFA548F7085AEE921DA45342C42D57B7CBCB2FA16D)
+FetchContent_GetProperties(snip_tesseract)
+if(NOT snip_tesseract_POPULATED)
+  FetchContent_Populate(snip_tesseract)
+endif()
+# Upstream relies on transitive includes that libc++ does not provide.
+foreach(header src/viewer/scrollview.h src/arch/simddetect.cpp)
+  file(READ "${snip_tesseract_SOURCE_DIR}/${header}" contents)
+  if(header MATCHES "scrollview")
+    set(required "#include <string>")
+  else()
+    set(required "#include <cstdlib>")
+  endif()
+  string(FIND "${contents}" "${required}" found)
+  if(found EQUAL -1)
+    file(WRITE "${snip_tesseract_SOURCE_DIR}/${header}" "${required}\n${contents}")
+  endif()
+endforeach()
+add_subdirectory("${snip_tesseract_SOURCE_DIR}" "${snip_tesseract_BINARY_DIR}" EXCLUDE_FROM_ALL)
+# Both dependencies generate config_auto.h; Tesseract must see its own first.
+target_include_directories(libtesseract BEFORE PRIVATE "${snip_tesseract_BINARY_DIR}")
+target_compile_definitions(libtesseract PRIVATE TESSERACT_DISABLE_DEBUG_FONTS)
+set_target_properties(libtesseract PROPERTIES PREFIX "lib" SUFFIX ".a" OUTPUT_NAME tesseract)
+if(MSVC)
+  set_property(TARGET leptonica libtesseract PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+if(SNIP_OCR_ARCHIVE_DIRECTORY)
+  set_target_properties(leptonica libtesseract PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${SNIP_OCR_ARCHIVE_DIRECTORY}")
+endif()

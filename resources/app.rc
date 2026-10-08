@@ -3,6 +3,7 @@
 201 RCDATA "samtec-logo.png"
 202 RCDATA "samtec-tiger.png"
 203 RCDATA "samtec-wordmark.png"
+204 RCDATA "ocr/eng.traineddata"
 1 RT_MANIFEST "app.manifest"
 301 DIALOGEX 0, 0, 310, 230
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
