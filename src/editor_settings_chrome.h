@@ -22,12 +22,16 @@ bool settingsControlSelected(int id)
         return app.settingsStartup;
     case AutoCopy:
         return app.autoCopy;
+    case SaveFormatPng:
+        return !app.exportOptions.jpg;
+    case SaveFormatJpg:
+        return app.exportOptions.jpg;
     case ProfessionalBorder:
-        return app.exportOptions.professionalBorder;
+        return !app.exportOptions.jpg && app.exportOptions.professionalBorder;
     case ProfessionalBlur:
-        return app.exportOptions.professionalBorder && app.exportOptions.professionalBlur;
+        return !app.exportOptions.jpg && app.exportOptions.professionalBorder && app.exportOptions.professionalBlur;
     case ProfessionalRounded:
-        return app.exportOptions.professionalBorder && app.exportOptions.professionalRounded;
+        return !app.exportOptions.jpg && app.exportOptions.professionalBorder && app.exportOptions.professionalRounded;
     case SamtecLogo:
         return app.exportOptions.samtecLogo;
     case ToggleActions:

@@ -59,6 +59,7 @@ struct ExportOptions
     uint8_t samtecStyle = 0;
     bool professionalBlur = true;
     bool professionalRounded = true;
+    bool jpg = false;
     bool operator==(const ExportOptions &) const = default;
 };
 class Graphics
@@ -86,6 +87,8 @@ class Graphics
     Bitmap exportImage(const Bitmap &image, const std::vector<Annotation> &items,
                        const ExportOptions &options = {}, int editingText = -1);
     std::vector<uint8_t> png(const Bitmap &bitmap);
+    // JPEG has no alpha; transparent edges and shadows are composited onto white.
+    std::vector<uint8_t> jpeg(const Bitmap &bitmap);
     Bitmap decode(const std::vector<uint8_t> &bytes);
     Bitmap samtecBadge(uint8_t style, int logoHeight = 48, bool lightWatermark = false);
     void test();

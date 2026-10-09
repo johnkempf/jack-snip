@@ -11,7 +11,6 @@
 #include "test_reports.h"
 #include <windowsx.h>
 #include <commctrl.h>
-#include <commdlg.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <shlobj.h>
@@ -122,6 +121,8 @@ enum Command
     TextSnip,
     CopySnipText,
     SettingsTextKey,
+    SaveFormatPng,
+    SaveFormatJpg,
     SettingsPageFirst = 2100,
     SettingsPageLast = SettingsPageFirst + 6,
     ColorFirst = PaletteFirst,
@@ -298,6 +299,7 @@ struct Application
     ULONGLONG copyFlashStarted = 0, copyNoticeStarted = 0;
     HMENU logoMenu = nullptr;
     HMENU professionalMenu = nullptr;
+    HMENU saveFormatMenu = nullptr;
     unsigned collapsedRows = 0;
     bool layoutPreferencesDirty = false, fullScreen = false, interactiveResize = false;
     bool menuHidden = false;
@@ -507,7 +509,8 @@ bool hasImage()
 }
 int previewPadding()
 {
-    return app.exportOptions.professionalBorder && app.exportOptions.professionalBlur ? 20 : 0;
+    return !app.exportOptions.jpg && app.exportOptions.professionalBorder &&
+                   app.exportOptions.professionalBlur ? 20 : 0;
 }
 void resetPreview()
 {
@@ -550,7 +553,8 @@ bool updateTextPreview(int editingText)
         return true;
     // Styled corners and adaptive watermarks depend on more than the box region.
     // Keep their established pipeline when an edit touches them.
-    if (app.exportOptions.professionalBorder && app.exportOptions.professionalRounded &&
+    if (!app.exportOptions.jpg && app.exportOptions.professionalBorder &&
+        app.exportOptions.professionalRounded &&
         (left < 10 || top < 10 || right > app.image.width - 10 || bottom > app.image.height - 10))
         return false;
     if (app.exportOptions.samtecLogo)
@@ -661,6 +665,7 @@ void loadToolPreferences()
     wchar_t folder[32768]{};
     GetPrivateProfileStringW(L"Settings", L"SaveFolder", L"", folder, 32768, app.iniPath.c_str());
     app.saveFolder = folder;
+    app.exportOptions.jpg = preferenceUInt(app.iniPath, L"Settings", L"SaveFormat", 0) == 1;
     app.exportOptions.professionalBorder =
         preferenceUInt(app.iniPath, L"Settings", L"ProfessionalBorder", 0) != 0;
     app.exportOptions.professionalBlur =
@@ -736,6 +741,7 @@ bool saveToolPreferences()
         }
         if (app.exportPreferencesDirty)
         {
+            setting(L"Settings", L"SaveFormat", app.exportOptions.jpg);
             setting(L"Settings", L"ProfessionalBorder", app.exportOptions.professionalBorder);
             setting(L"Settings", L"ProfessionalBlur", app.exportOptions.professionalBlur);
             setting(L"Settings", L"ProfessionalRounded", app.exportOptions.professionalRounded);
@@ -2028,10 +2034,10 @@ void buildButtons()
                 hint = L"Copy image with annotations (Ctrl+C)";
                 break;
             case Save:
-                hint = L"Save PNG (Ctrl+S)";
+                hint = L"Save image to the configured folder";
                 break;
             case SaveAs:
-                hint = L"Choose where to save the PNG (Ctrl+Shift+S)";
+                hint = L"Choose where to save the image (Ctrl+S or Ctrl+Shift+S)";
                 break;
             case RecentSnips:
                 hint = L"Reopen one of the last 10 snips from this session (Ctrl+Shift+R)";
@@ -2192,6 +2198,9 @@ void closeSettingsPanel()
 }
 bool enabled(int id)
 {
+    if (app.exportOptions.jpg &&
+        (id == ProfessionalBorder || id == ProfessionalBlur || id == ProfessionalRounded))
+        return false;
     if (id == DeleteSelected)
         return hasImage() && selected();
     if (id == Clear)
@@ -2987,10 +2996,7 @@ LRESULT CALLBACK textEditProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp
                     }
                     if (ctrl && (wp == 'B' || wp == 'S' || wp == 'N'))
                     {
-                        command(wp == 'B'                          ? TextBold
-                                : wp == 'N'                        ? NewSnip
-                                : (GetKeyState(VK_SHIFT) & 0x8000) ? SaveAs
-                                                                   : Save);
+                        command(wp == 'B' ? TextBold : wp == 'N' ? NewSnip : SaveAs);
                         return 0;
                     }
                 }
@@ -4265,7 +4271,31 @@ void chooseSaveFolder()
     setSaveFolder(folder);
     status(L"Save location: " + app.saveFolder);
 }
-bool chooseSave(std::wstring &path)
+const wchar_t *saveFormatName(bool jpg = app.exportOptions.jpg)
+{
+    return jpg ? L"JPG" : L"PNG";
+}
+const wchar_t *saveExtension(bool jpg = app.exportOptions.jpg)
+{
+    return jpg ? L".jpg" : L".png";
+}
+bool saveExtensionMatches(const std::wstring &path, bool jpg = app.exportOptions.jpg)
+{
+    const auto extension = std::filesystem::path(path).extension().wstring();
+    return _wcsicmp(extension.c_str(), saveExtension(jpg)) == 0 ||
+           (jpg && _wcsicmp(extension.c_str(), L".jpeg") == 0);
+}
+std::wstring saveFormatPath(const std::wstring &path, bool jpg = app.exportOptions.jpg)
+{
+    if (path.empty() || saveExtensionMatches(path, jpg))
+        return path;
+    return std::filesystem::path(path).replace_extension(saveExtension(jpg)).wstring();
+}
+std::vector<uint8_t> encodeSavedImage(const Bitmap &bitmap, bool jpg)
+{
+    return jpg ? app.graphics.jpeg(bitmap) : app.graphics.png(bitmap);
+}
+bool chooseSave(std::wstring &path, bool &jpg)
 {
     wchar_t buffer[32768]{};
     if (!path.empty())
@@ -4274,54 +4304,84 @@ bool chooseSave(std::wstring &path)
     {
         SYSTEMTIME time{};
         GetLocalTime(&time);
-        swprintf_s(buffer, L"Snip-%04u%02u%02u-%02u%02u%02u.png", time.wYear, time.wMonth,
-                   time.wDay, time.wHour, time.wMinute, time.wSecond);
+        swprintf_s(buffer, L"Snip-%04u%02u%02u-%02u%02u%02u%ls", time.wYear, time.wMonth,
+                   time.wDay, time.wHour, time.wMinute, time.wSecond, saveExtension(jpg));
     }
-    const auto initialPath = initialSavePath(buffer);
-    wcsncpy_s(buffer, initialPath.c_str(), _TRUNCATE);
-    OPENFILENAMEW dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = IsWindowVisible(app.window) ? app.window : nullptr;
-    dialog.lpstrFilter = L"PNG image (*.png)\0*.png\0\0";
-    dialog.lpstrFile = buffer;
-    dialog.nMaxFile = 32768;
-    dialog.lpstrDefExt = L"png";
-    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetSaveFileNameW(&dialog))
+    const std::filesystem::path initialPath = initialSavePath(buffer);
+    Com<IFileSaveDialog> dialog;
+    check(CoCreateInstance(__uuidof(FileSaveDialog), nullptr, CLSCTX_INPROC_SERVER,
+                           __uuidof(IFileSaveDialog), reinterpret_cast<void **>(dialog.put())),
+          "Cannot create the Save As dialog.");
+    DWORD options = 0;
+    check(dialog->GetOptions(&options), "Cannot read Save As options.");
+    check(dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT |
+                             FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR | FOS_STRICTFILETYPES),
+          "Cannot configure Save As.");
+    const COMDLG_FILTERSPEC formats[] = {
+        {L"PNG image (*.png)", L"*.png"},
+        {L"JPG image - no border, blur or rounded corners (*.jpg;*.jpeg)", L"*.jpg;*.jpeg"}};
+    check(dialog->SetFileTypes(std::size(formats), formats), "Cannot set Save As formats.");
+    check(dialog->SetFileTypeIndex(jpg ? 2 : 1), "Cannot select the Save As format.");
+    // The modern dialog updates this extension itself when the file type changes.
+    check(dialog->SetDefaultExtension(saveExtension(jpg) + 1), "Cannot set the save extension.");
+    check(dialog->SetFileName(initialPath.filename().c_str()), "Cannot set the save filename.");
+    if (initialPath.has_parent_path() && existingFolder(initialPath.parent_path().wstring()))
     {
-        const DWORD failure = CommDlgExtendedError();
-        if (failure)
-            throwWindowsError("Windows could not open the save dialog.", failure);
-        return false;
+        Com<IShellItem> folder;
+        check(SHCreateItemFromParsingName(initialPath.parent_path().c_str(), nullptr,
+                                          __uuidof(IShellItem), reinterpret_cast<void **>(folder.put())),
+              "Cannot read the initial save folder.");
+        check(dialog->SetFolder(folder.get()), "Cannot select the initial save folder.");
     }
-    path = buffer;
+#ifdef TIGER_SNIP_TESTING
+    if (testing::saveDialogReady)
+        testing::saveDialogReady(dialog.get());
+#endif
+    const HRESULT result = dialog->Show(IsWindowVisible(app.window) ? app.window : nullptr);
+    if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+        return false;
+    check(result, "Windows could not open the Save As dialog.");
+    UINT selectedFormat = 0;
+    check(dialog->GetFileTypeIndex(&selectedFormat), "Cannot read the selected save format.");
+    jpg = selectedFormat == 2;
+    Com<IShellItem> selectedFile;
+    check(dialog->GetResult(selectedFile.put()), "Cannot read the selected save file.");
+    PWSTR selectedPath = nullptr;
+    check(selectedFile->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath), "Cannot read the save path.");
+    path = selectedPath;
+    CoTaskMemFree(selectedPath);
     auto dot = path.find_last_of(L'.'), slash = path.find_last_of(L"\\/");
     if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash))
-        path += L".png";
-    else if (_wcsicmp(path.substr(dot).c_str(), L".png") != 0)
+        path += saveExtension(jpg);
+    else if (!saveExtensionMatches(path, jpg))
     {
+        const std::wstring message = jpg
+            ? L"JPG is selected. Use .jpg or .jpeg, or select PNG in Save as type."
+            : L"PNG is selected. Use .png, or select JPG in Save as type.";
         MessageBoxW(IsWindowVisible(app.window) ? app.window : nullptr,
-                    L"Tiger Snip saves PNG images. Use a filename ending in .png.", L"Save as PNG",
+                    message.c_str(), L"Save image",
                     MB_OK | MB_ICONINFORMATION);
-        return chooseSave(path);
+        path = saveFormatPath(path, jpg);
+        return chooseSave(path, jpg);
     }
     return true;
 }
-bool chooseSaveDestination(std::wstring &path, bool saveAs)
+bool chooseSaveDestination(std::wstring &path, bool saveAs, bool &jpg)
 {
     if (path.empty() || saveAs)
-        return chooseSave(path);
-    if (app.saveFolder.empty())
-        return true;
-    if (!existingFolder(app.saveFolder))
+    {
+        path = saveFormatPath(path, jpg);
+        return chooseSave(path, jpg);
+    }
+    if (!app.saveFolder.empty() && !existingFolder(app.saveFolder))
         throw std::runtime_error("The save folder is unavailable. Choose a new Save location "
                                  "in Settings or use Save As.");
-    const auto destination = initialSavePath(path);
+    const auto destination = initialSavePath(saveFormatPath(path, jpg));
     // Changing folders must not silently overwrite another image with the same name.
     const bool different = _wcsicmp(destination.c_str(), path.c_str()) != 0;
     path = destination;
     if (different && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-        return chooseSave(path);
+        return chooseSave(path, jpg);
     return true;
 }
 void saveImage(bool saveAs = false)
@@ -4329,14 +4389,19 @@ void saveImage(bool saveAs = false)
     if (!hasImage())
         return;
     std::wstring path = app.savePath;
-    if (!chooseSaveDestination(path, saveAs))
+    bool jpg = app.exportOptions.jpg;
+    if (!chooseSaveDestination(path, saveAs, jpg))
         return;
-    auto bitmap = renderedExport();
-    saveBytes(path, app.graphics.png(bitmap));
+    auto options = app.exportOptions;
+    options.jpg = jpg;
+    const auto bitmap = jpg == app.exportOptions.jpg ? renderedExport()
+                        : app.graphics.exportImage(app.image, app.document.items, options);
+    saveBytes(path, encodeSavedImage(bitmap, jpg));
     app.savePath = path;
     app.dirty = false;
     updateTitle();
-    status(L"Saved PNG: " + path);
+    status(std::wstring(L"Saved ") + saveFormatName(jpg) +
+           (jpg ? L" (Professional Border disabled): " : L": ") + path);
 }
 void saveRecentSnip(int index, bool saveAs)
 {
@@ -4355,18 +4420,24 @@ void saveRecentSnip(int index, bool saveAs)
         return;
     std::wstring path = snip.savePath;
     const auto sequence = snip.sequence;
-    const auto bitmap =
-        app.graphics.exportImage(snip.image, snip.document.items, app.exportOptions);
-    if (!chooseSaveDestination(path, saveAs))
+    // The picker pumps messages, so retain this capture before opening it.
+    const auto image = snip.image;
+    const auto items = snip.document.items;
+    auto options = app.exportOptions;
+    bool jpg = options.jpg;
+    if (!chooseSaveDestination(path, saveAs, jpg))
         return;
-    saveBytes(path, app.graphics.png(bitmap));
+    options.jpg = jpg;
+    const auto bitmap = app.graphics.exportImage(image, items, options);
+    saveBytes(path, encodeSavedImage(bitmap, jpg));
     // The modal picker pumps messages; a new capture may have changed Recent.
     if (index < static_cast<int>(app.recent.size()) && app.recent[index].sequence == sequence)
     {
         app.recent[index].savePath = path;
         app.recent[index].dirty = false;
     }
-    status(L"Saved recent snip " + std::to_wstring(sequence) + L": " + path);
+    status(std::wstring(L"Saved recent ") + saveFormatName(jpg) + L" snip " + std::to_wstring(sequence) +
+           (jpg ? L" (Professional Border disabled): " : L": ") + path);
 }
 void closeSettings()
 {
@@ -5124,6 +5195,8 @@ void command(int id, bool editSelectedStyle)
     case ProfessionalBlur:
     case ProfessionalRounded:
     case SamtecLogo: {
+        if (id != SamtecLogo && app.exportOptions.jpg)
+            break;
         auto &option = id == ProfessionalBorder    ? app.exportOptions.professionalBorder
                        : id == ProfessionalBlur    ? app.exportOptions.professionalBlur
                        : id == ProfessionalRounded ? app.exportOptions.professionalRounded
@@ -5145,6 +5218,20 @@ void command(int id, bool editSelectedStyle)
             saveToolPreferencesOrNotify();
         break;
     }
+    case SaveFormatPng:
+    case SaveFormatJpg:
+        commitPreferences(app.iniPath, {{L"Settings", L"SaveFormat",
+                                        id == SaveFormatJpg ? L"1" : L"0"}});
+        app.exportOptions.jpg = id == SaveFormatJpg;
+        updateMenus();
+        if (hasImage())
+        {
+            app.dirty = true;
+            updateTitle();
+        }
+        status(app.exportOptions.jpg ? L"JPG exports selected. Professional Border is disabled."
+                                    : L"PNG exports selected. Professional Border is available.");
+        break;
     case ShowEditor:
         showEditor();
         break;
@@ -5152,7 +5239,7 @@ void command(int id, bool editSelectedStyle)
         MessageBoxW(app.window,
                     L"Tiger Snip 1.0.2\n\nNative C++ screenshot editor.\nDeveloped by Jack "
                     L"Kempf\n\nCtrl+N: new snip\nCtrl+C: "
-                    L"copy image with annotations\nCtrl+S: save PNG\nCtrl+Shift+S: Save As\nCtrl+Z "
+                    L"copy image with annotations\nCtrl+S: Save As\nCtrl+Shift+S: Save As\nCtrl+Z "
                     L"/ Ctrl+Y: undo / redo\nChoose tools from the toolbar; plain letters do not "
                     L"activate tools.\n[ / ]: brush size\nDelete: remove selection\nMouse wheel: "
                     L"zoom from Fit to 800%\nSelect + drag image: pan (also middle-drag or "
@@ -5563,8 +5650,8 @@ HMENU createMenu()
     AppendMenuW(file, MF_STRING, TextSnip, L"Capture &text");
     AppendMenuW(file, MF_STRING, Copy, L"&Copy image\tCtrl+C");
     AppendMenuW(file, MF_STRING, CopySnipText, L"Copy text from snip");
-    AppendMenuW(file, MF_STRING, Save, L"&Save PNG\tCtrl+S");
-    AppendMenuW(file, MF_STRING, SaveAs, L"Save &As...\tCtrl+Shift+S");
+    AppendMenuW(file, MF_STRING, Save, L"&Save to current location");
+    AppendMenuW(file, MF_STRING, SaveAs, L"Save &As...\tCtrl+S");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, Exit, L"E&xit");
     AppendMenuW(edit, MF_STRING, Undo, L"&Undo\tCtrl+Z");
@@ -5602,6 +5689,10 @@ HMENU createMenu()
     AppendMenuW(settings, MF_STRING, AutoCopy, L"Auto &copy new snips");
     AppendMenuW(settings, MF_STRING, RenderingSettings, L"&Rendering...");
     AppendMenuW(settings, MF_STRING, SaveLocation, L"Save &location...");
+    app.saveFormatMenu = CreatePopupMenu();
+    AppendMenuW(app.saveFormatMenu, MF_STRING, SaveFormatPng, L"&PNG (keeps transparency)");
+    AppendMenuW(app.saveFormatMenu, MF_STRING, SaveFormatJpg, L"&JPG (no Professional Border)");
+    AppendMenuW(settings, MF_POPUP, reinterpret_cast<UINT_PTR>(app.saveFormatMenu), L"Save &format");
     AppendMenuW(settings, MF_STRING, Startup, L"Run at &sign-in");
     AppendMenuW(settings, MF_SEPARATOR, 0, nullptr);
     app.professionalMenu = CreatePopupMenu();
@@ -5642,6 +5733,8 @@ void updateMenus()
                        MF_BYCOMMAND);
     CheckMenuRadioItem(app.appearanceMenu, AppearanceLight, AppearanceDark,
                        app.darkTheme ? AppearanceDark : AppearanceLight, MF_BYCOMMAND);
+    CheckMenuRadioItem(app.saveFormatMenu, SaveFormatPng, SaveFormatJpg,
+                       app.exportOptions.jpg ? SaveFormatJpg : SaveFormatPng, MF_BYCOMMAND);
     const wchar_t *labels[] = {app.classicUI ? L"&Actions" : L"&Command bar",
                                app.classicUI ? L"&Tools and shapes" : L"&Tool rail",
                                app.classicUI ? L"&Color and size" : L"&Properties panel"};
@@ -5661,7 +5754,15 @@ void updateMenus()
     CheckMenuItem(menu, FullScreen, MF_BYCOMMAND | (app.fullScreen ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu, ProfessionalBorder,
                   MF_BYCOMMAND |
-                      (app.exportOptions.professionalBorder ? MF_CHECKED : MF_UNCHECKED));
+                      (settingsControlSelected(ProfessionalBorder) ? MF_CHECKED : MF_UNCHECKED));
+    MENUITEMINFOW borderLabel{};
+    borderLabel.cbSize = sizeof(borderLabel);
+    borderLabel.fMask = MIIM_STRING;
+    borderLabel.dwTypeData = const_cast<wchar_t *>(app.exportOptions.jpg
+                                 ? L"Unavailable for JPG (requires PNG)" : L"&Enabled");
+    SetMenuItemInfoW(app.professionalMenu, ProfessionalBorder, FALSE, &borderLabel);
+    EnableMenuItem(menu, ProfessionalBorder,
+                   MF_BYCOMMAND | (app.exportOptions.jpg ? MF_GRAYED : MF_ENABLED));
     CheckMenuItem(menu, ProfessionalBlur,
                   MF_BYCOMMAND | (settingsControlSelected(ProfessionalBlur) ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu, ProfessionalRounded,
@@ -5670,7 +5771,8 @@ void updateMenus()
     for (int id : {ProfessionalBlur, ProfessionalRounded})
         EnableMenuItem(menu, id,
                        MF_BYCOMMAND |
-                           (app.exportOptions.professionalBorder ? MF_ENABLED : MF_GRAYED));
+                           (!app.exportOptions.jpg && app.exportOptions.professionalBorder
+                                ? MF_ENABLED : MF_GRAYED));
     CheckMenuItem(menu, SamtecLogo,
                   MF_BYCOMMAND | (app.exportOptions.samtecLogo ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuRadioItem(app.logoMenu, LogoStyleFirst, LogoStyleFirst + 5,
@@ -5903,7 +6005,7 @@ void processKey(WPARAM key, LPARAM info = 0)
             command(Copy);
             break;
         case 'S':
-            command(shift ? SaveAs : Save);
+            command(SaveAs);
             break;
         case 'Z':
             command(shift ? Redo : Undo);

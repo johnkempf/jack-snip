@@ -1,6 +1,6 @@
 # Tiger Snip
 
-Tiger Snip is a local Windows screenshot and annotation tool. Capture an area or the full desktop, add text and drawings, then copy the image or save it as a PNG.
+Tiger Snip is a local Windows screenshot and annotation tool. Capture an area or the full desktop, add text and drawings, then copy the image or save it as a PNG or JPG.
 
 ## Features
 
@@ -24,9 +24,15 @@ Saved selections of the retired Orange preset switch to Purple; saved custom col
 ## Use
 
 Click **New snip** and drag a rectangle. Add annotations, then press **Ctrl+C** to copy or **Ctrl+S** to save. See [Quick Start](dist/Quick%20Start.txt) for the controls.
-**Ctrl+S** uses the current **Settings → General → Save location**, including for a snip
-already saved in another folder. It keeps the filename. The top-right **Save as** button
-(**Ctrl+Shift+S**) always opens a picker so you can choose a filename and destination.
+**Ctrl+S**, **Ctrl+Shift+S**, and the top-right **Save as** button always open the modern
+Windows save picker, even after you have saved the snip. It starts in your current
+**Settings → General → Save location**, so you can choose another folder for each copy.
+Choose **PNG** or **JPG** under **Settings → Export → Save format**. PNG is the default.
+JPG disables Professional Border, including blur and rounded corners, because it does
+not support transparency. Switching back to PNG restores your previous border choices.
+**Save as type** also offers both formats. Choosing JPG there omits the border, blur,
+and rounded corners for that file; choosing PNG uses your remembered border choices.
+The dropdown does not change the default format in Settings or the editor preview.
 The capture icon on the welcome screen also starts a snip. **Recent** keeps the last ten captures;
 Right-click the open snip or a Recent thumbnail for **Copy**, **Save**, and **Save As**.
 Recent actions include annotations and export effects without reopening the capture.

@@ -57,6 +57,18 @@ int wmain()
                 "A fresh user must retain the ordinary renderer and tool defaults.");
         require(!app.classicUI && app.colorTheme == 0 && !app.darkTheme,
                 "A fresh installation must default to the new UI with the Purple light theme.");
+        require(!app.exportOptions.jpg, "New users must default to PNG exports.");
+        commitPreferences(app.iniPath, {{L"Settings", L"SaveFormat", L"1"},
+                                       {L"Settings", L"ProfessionalBorder", L"1"},
+                                       {L"Settings", L"ProfessionalBlur", L"1"},
+                                       {L"Settings", L"ProfessionalRounded", L"1"}});
+        loadToolPreferences();
+        require(app.exportOptions.jpg && app.exportOptions.professionalBorder &&
+                    app.exportOptions.professionalBlur && app.exportOptions.professionalRounded,
+                "JPG did not reload while retaining the previous PNG border choices.");
+        commitPreferences(app.iniPath, {{L"Settings", L"SaveFormat", L"99"}});
+        loadToolPreferences();
+        require(!app.exportOptions.jpg, "An invalid save format must fall back to PNG.");
         for (int theme : {2, 3, 4})
         {
             require(WritePrivateProfileStringW(L"Settings", L"ColorTheme",

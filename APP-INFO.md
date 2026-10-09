@@ -10,7 +10,10 @@ Settings are saved in `%LOCALAPPDATA%\Tiger Snip\TigerSnip.ini`. Startup at sign
 
 ## Data storage
 
-Screenshots and edits stay in memory while Tiger Snip is running. Closing the window keeps it in the tray; File > Exit clears the recent captures. Copy sends an image to the Windows clipboard, and Save writes a PNG to the chosen location. Tiger Snip has no networking or telemetry functionality.
+Screenshots and edits stay in memory while Tiger Snip is running. Closing the window keeps it in the tray; File > Exit clears the recent captures. Copy sends an image to the Windows clipboard, and Save writes a PNG or JPG to the chosen location. Choose the format in Settings > Export; JPG disables Professional Border, blur, and rounded corners. PNG restores the previous border choices. Tiger Snip has no networking or telemetry functionality.
+
+Save As also offers PNG and JPG. Its format choice applies to that file without
+changing Settings; JPG omits border effects and PNG uses the remembered choices.
 
 Copy text recognizes selected pixels locally and sends Unicode text to the
 Windows clipboard. Recognition uses the built-in Windows OCR engine and installed

@@ -144,14 +144,22 @@ SettingsPanelLayout settingsPanelLayout()
             L"Image captures copy automatically. Text always copies with a preview.");
         break;
     case 3: {
+        heading(L"Save format");
+        choices(SaveFormatPng, L"PNG", L"JPG");
+        row(0, SettingsControlKind::Text,
+            app.exportOptions.jpg ? L"Professional Border is disabled for JPG."
+                                  : L"PNG preserves transparency and image quality.",
+            app.exportOptions.jpg ? L"JPG does not support transparency. Switch to PNG for border, blur, and rounded corners."
+                                  : L"Choose JPG for a compressed image without Professional Border.", 80);
         const size_t borderGroup = l.controls.size();
         l.controls.push_back({{l.body.left, y, l.body.right, y}, 0,
                               SettingsControlKind::Group, L"", L""});
         row(ProfessionalBorder, SettingsControlKind::Toggle, L"Professional Border",
-            L"The original soft border, applied to Copy and PNG Save.");
+            L"The original soft border, applied to Copy and Save.");
         row(0, SettingsControlKind::Text,
-            app.exportOptions.professionalBorder ? L"Professional Border options"
-                                                : L"Enable Professional Border to use these options.",
+            app.exportOptions.jpg ? L"Unavailable while JPG exports are selected."
+            : app.exportOptions.professionalBorder ? L"Professional Border options"
+                                                  : L"Enable Professional Border to use these options.",
             L"", 28);
         l.controls.back().rect.left += 24;
         l.controls.back().rect.right -= 12;
@@ -202,7 +210,7 @@ SettingsPanelLayout settingsPanelLayout()
                   {RecentSnips, L"Recent snips"},
                   {Copy, L"Copy image"},
                   {CopySnipText, L"Copy text from snip"},
-                  {Save, L"Save PNG"},
+                  {Save, L"Save image"},
                   {SaveAs, L"Save as"},
                   {Undo, L"Undo"},
                   {Redo, L"Redo"},
@@ -218,7 +226,7 @@ SettingsPanelLayout settingsPanelLayout()
         row(0, SettingsControlKind::Text, L"Capture. Annotate. Share.", L"Developed by Jack Kempf",
             72);
         row(0, SettingsControlKind::Text, L"Useful shortcuts",
-            L"Ctrl+N  New snip\nCtrl+C  Copy\nCtrl+S  Save PNG\nCtrl+Shift+S  Save as\nCtrl+Z / "
+            L"Ctrl+N  New snip\nCtrl+C  Copy\nCtrl+S  Save as\nCtrl+Shift+S  Save as\nCtrl+Z / "
             L"Ctrl+Y  Undo / redo\nCtrl+Shift+R  Recent snips\nF11  Full screen\nEsc  Cancel\n[ / "
             L"]  Brush size",
             230);

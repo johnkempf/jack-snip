@@ -1,5 +1,6 @@
 // Exercise the editor's capture/Copy paths on a private Windows clipboard.
 // Including the entry point keeps these integration checks out of the shipped executable.
+#define TIGER_SNIP_TESTING
 #include "../src/main.cpp"
 #include <cstring>
 #include <iostream>
@@ -9,6 +10,98 @@
 
 bool recentCopyMenuSeen = false;
 int snipMenuChoice = Copy;
+std::wstring saveDialogPath, switchedDialogName;
+std::wstring initialSaveFolder;
+bool saveDialogJpg = false, cancelSaveDialog = false, saveDialogSeen = false;
+DWORD initialSaveFilter = 0;
+bool saveDialogFiltersValid = false;
+IFileSaveDialog *activeSaveDialog = nullptr;
+unsigned saveDialogAttempts = 0;
+void CALLBACK driveSaveDialog(HWND window, UINT, UINT_PTR id, DWORD)
+{
+    try
+    {
+        Com<IOleWindow> nativeWindow;
+        check(activeSaveDialog->QueryInterface(__uuidof(IOleWindow),
+                    reinterpret_cast<void **>(nativeWindow.put())), "Save As is not a native dialog.");
+        HWND dialogWindow = nullptr;
+        if (FAILED(nativeWindow->GetWindow(&dialogWindow)) || !IsWindow(dialogWindow))
+        {
+            if (++saveDialogAttempts >= 50)
+                throw std::runtime_error("The modern Save As dialog did not open.");
+            return;
+        }
+        KillTimer(window, id);
+        saveDialogSeen = true;
+        Com<IShellItem> startingFolder;
+        check(activeSaveDialog->GetFolder(startingFolder.put()), "Cannot read the initial save folder.");
+        PWSTR folderName = nullptr;
+        check(startingFolder->GetDisplayName(SIGDN_FILESYSPATH, &folderName), "Cannot read the initial folder path.");
+        initialSaveFolder = folderName;
+        CoTaskMemFree(folderName);
+        UINT selectedFormat = 0;
+        check(activeSaveDialog->GetFileTypeIndex(&selectedFormat), "Cannot read initial save type.");
+        initialSaveFilter = selectedFormat;
+        HWND formatCombo = nullptr;
+        EnumChildWindows(dialogWindow, [](HWND child, LPARAM data) -> BOOL {
+            wchar_t className[64]{};
+            GetClassNameW(child, className, std::size(className));
+            if (wcscmp(className, L"ComboBox") != 0 || SendMessageW(child, CB_GETCOUNT, 0, 0) != 2)
+                return TRUE;
+            wchar_t first[256]{}, second[256]{};
+            if (SendMessageW(child, CB_GETLBTEXTLEN, 0, 0) >= 256 ||
+                SendMessageW(child, CB_GETLBTEXTLEN, 1, 0) >= 256)
+                return TRUE;
+            SendMessageW(child, CB_GETLBTEXT, 0, reinterpret_cast<LPARAM>(first));
+            SendMessageW(child, CB_GETLBTEXT, 1, reinterpret_cast<LPARAM>(second));
+            if (wcsstr(first, L"PNG") && wcsstr(second, L"JPG") && wcsstr(second, L"no border"))
+            {
+                *reinterpret_cast<HWND *>(data) = child;
+                return FALSE;
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&formatCombo));
+        if (!formatCombo)
+            throw std::runtime_error("Modern Save As is missing the PNG/JPG dropdown.");
+        SendMessageW(formatCombo, CB_SETCURSEL, saveDialogJpg ? 1 : 0, 0);
+        SendMessageW(GetParent(formatCombo), WM_COMMAND,
+                     MAKEWPARAM(GetDlgCtrlID(formatCombo), CBN_SELENDOK),
+                     reinterpret_cast<LPARAM>(formatCombo));
+        PWSTR name = nullptr;
+        check(activeSaveDialog->GetFileName(&name), "Cannot read the changed filename.");
+        switchedDialogName = name;
+        CoTaskMemFree(name);
+        DWORD options = 0;
+        check(activeSaveDialog->GetOptions(&options), "Cannot read Save As options.");
+        saveDialogFiltersValid = (options & FOS_STRICTFILETYPES) &&
+                                (options & FOS_OVERWRITEPROMPT);
+        if (cancelSaveDialog)
+            activeSaveDialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+        else
+        {
+            Com<IShellItem> destinationFolder;
+            check(SHCreateItemFromParsingName(std::filesystem::path(saveDialogPath).parent_path().c_str(), nullptr,
+                    __uuidof(IShellItem), reinterpret_cast<void **>(destinationFolder.put())),
+                  "Cannot read the second save folder.");
+            check(activeSaveDialog->SetFolder(destinationFolder.get()), "Cannot choose another save folder.");
+            check(activeSaveDialog->SetFileName(std::filesystem::path(saveDialogPath).stem().c_str()),
+                  "Cannot enter save filename.");
+            PostMessageW(dialogWindow, WM_COMMAND, IDOK, 0);
+        }
+    }
+    catch (const std::exception &exception)
+    {
+        std::cerr << "Save As test driver: " << exception.what() << '\n';
+        KillTimer(window, id);
+        activeSaveDialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+    }
+}
+void prepareSaveDialog(IFileSaveDialog *dialog)
+{
+    activeSaveDialog = dialog;
+    saveDialogAttempts = 0;
+    SetTimer(app.window, 54321, 100, driveSaveDialog);
+}
 LRESULT CALLBACK driveRecentCopyMenu(int code, WPARAM wp, LPARAM lp)
 {
     if (code >= 0)
@@ -307,13 +400,10 @@ int wmain()
         };
         const auto originalBytes = readBytes(originalSavePath);
         require(!originalBytes.empty(), "The previous save fixture is missing.");
-        auto ctrlS = [&] {
-            require(SetKeyboardState(ctrlKeyboard), "Cannot set private Ctrl+S keyboard state.");
-            SendMessageW(app.window, WM_KEYDOWN, 'S', 0);
-            require(SetKeyboardState(keyboard), "Cannot restore keyboard after Ctrl+S.");
-        };
+        // Direct Save still supports the explicit current-location action.
+        auto quickSave = [&] { saveImage(); };
         setSaveFolder(firstFolder.wstring());
-        ctrlS();
+        quickSave();
         const auto firstPath =
             (firstFolder / std::filesystem::path(originalSavePath).filename()).wstring();
         require(app.savePath == firstPath && !app.dirty,
@@ -322,7 +412,7 @@ int wmain()
         require(app.status == L"Saved PNG: " + firstPath,
                 "Save confirmation did not identify the actual destination.");
         setSaveFolder(secondFolder.wstring());
-        ctrlS();
+        quickSave();
         const auto secondPath =
             (secondFolder / std::filesystem::path(originalSavePath).filename()).wstring();
         require(app.savePath == secondPath,
@@ -353,6 +443,110 @@ int wmain()
         }
         require(rejectedUnavailable && app.savePath == liveSavePath,
                 "An unavailable save folder silently saved somewhere else.");
+        app.saveFolder = secondFolder.wstring();
+        app.exportOptions.professionalBorder = true;
+        app.exportOptions.professionalBlur = true;
+        app.exportOptions.professionalRounded = true;
+        command(SaveFormatJpg);
+        quickSave();
+        const auto jpgPath = std::filesystem::path(secondPath).replace_extension(L".jpg").wstring();
+        const auto jpgBytes = readBytes(jpgPath);
+        require(app.savePath == jpgPath && app.status == L"Saved JPG (Professional Border disabled): " + jpgPath &&
+                    jpgBytes.size() > 2 && jpgBytes[0] == 0xff && jpgBytes[1] == 0xd8,
+                "Save did not switch the filename and encoded file to JPG.");
+        const auto decodedJpg = app.graphics.decode(jpgBytes);
+        require(decodedJpg.width == app.image.width && decodedJpg.height == app.image.height &&
+                    app.exportOptions.professionalBorder && app.exportOptions.professionalBlur &&
+                    app.exportOptions.professionalRounded &&
+                    GetPrivateProfileIntW(L"Settings", L"SaveFormat", 0, app.iniPath.c_str()) == 1,
+                "JPG export retained the border or lost remembered options/persistence.");
+        savedMatches(secondPath, app.graphics.exportImage(app.image, app.document.items));
+        copyImage();
+        clipboardMatches(renderedExport());
+        saveRecentSnip(0, false);
+        const auto recentJpgPath = std::filesystem::path(recentPath).replace_extension(L".jpg").wstring();
+        const auto recentJpgBytes = readBytes(recentJpgPath);
+        require(app.recent[0].savePath == recentJpgPath && recentJpgBytes.size() > 2 &&
+                    recentJpgBytes[0] == 0xff && recentJpgBytes[1] == 0xd8 &&
+                    app.graphics.decode(recentJpgBytes).width == app.recent[0].image.width,
+                "Recent Save did not produce JPG without Professional Border.");
+        command(SaveFormatPng);
+        const auto returnFolder = saveRoot / L"back to PNG";
+        std::filesystem::create_directory(returnFolder);
+        setSaveFolder(returnFolder.wstring());
+        quickSave();
+        require(std::filesystem::path(app.savePath).extension() == L".png" &&
+                    renderedExport().width == app.image.width + 40,
+                "Switching back to PNG did not restore the extension and Professional Border.");
+        savedMatches(app.savePath, renderedExport());
+        require(saveExtensionMatches(L"image.PNG") && !saveExtensionMatches(L"image.jpg"),
+                "PNG extension validation failed.");
+        auto saveAs = [&](const std::wstring &path, bool jpg, bool cancel, int recent = -1) {
+            saveDialogPath = path;
+            saveDialogJpg = jpg;
+            cancelSaveDialog = cancel;
+            saveDialogSeen = saveDialogFiltersValid = false;
+            switchedDialogName.clear();
+            testing::saveDialogReady = prepareSaveDialog;
+            if (recent < 0)
+            {
+                require(SetKeyboardState(ctrlKeyboard), "Cannot set private Ctrl+S keyboard state.");
+                SendMessageW(app.window, WM_KEYDOWN, 'S', 0);
+                require(SetKeyboardState(keyboard), "Cannot restore keyboard after Ctrl+S.");
+            }
+            else
+                saveRecentSnip(recent, true);
+            testing::saveDialogReady = nullptr;
+            activeSaveDialog = nullptr;
+            KillTimer(app.window, 54321);
+            require(saveDialogSeen && saveDialogFiltersValid,
+                    "Ctrl+S did not open the modern Save As dialog with safe save options.");
+        };
+        const auto pngPreferences = app.exportOptions;
+        const auto previewBeforeSaveAs = renderedExport();
+        const auto dialogJpgPath = (returnFolder / L"dropdown-export.jpg").wstring();
+        saveAs(dialogJpgPath, true, false);
+        const auto dialogJpg = app.graphics.decode(readBytes(dialogJpgPath));
+        require(initialSaveFilter == 1 &&
+                    app.savePath == dialogJpgPath && dialogJpg.width == app.image.width &&
+                    dialogJpg.height == app.image.height && app.exportOptions == pngPreferences &&
+                    renderedExport().pixels == previewBeforeSaveAs.pixels && initialSaveFolder == returnFolder.wstring(),
+                "Save As JPG did not remove the border locally, update the extension or preserve PNG settings/preview.");
+        const auto firstCopyBytes = readBytes(dialogJpgPath);
+        const auto anotherFolder = saveRoot / L"another copy";
+        std::filesystem::create_directory(anotherFolder);
+        const auto secondCopyPath = (anotherFolder / L"dropdown-export.jpg").wstring();
+        saveAs(secondCopyPath, true, false);
+        require(app.savePath == secondCopyPath && readBytes(dialogJpgPath) == firstCopyBytes &&
+                    readBytes(secondCopyPath) == firstCopyBytes && initialSaveFolder == returnFolder.wstring(),
+                "Repeated Ctrl+S did not save the same snip in a second folder or changed the first copy.");
+        const auto pathBeforeCancel = app.savePath;
+        const auto cancelledPath = (returnFolder / L"cancelled-dropdown.png").wstring();
+        saveAs(cancelledPath, false, true);
+        require(app.savePath == pathBeforeCancel && !std::filesystem::exists(cancelledPath) &&
+                    app.exportOptions == pngPreferences,
+                "Cancelling Save As changed the save path, settings or created a file.");
+        const auto dialogRecentJpgPath = (returnFolder / L"recent-dropdown.jpg").wstring();
+        saveAs(dialogRecentJpgPath, true, false, 0);
+        require(app.recent[0].savePath == dialogRecentJpgPath &&
+                    app.graphics.decode(readBytes(dialogRecentJpgPath)).width == app.recent[0].image.width &&
+                    app.savePath == pathBeforeCancel && app.exportOptions == pngPreferences,
+                "Recent Save As JPG retained the border or changed the active editor/settings.");
+        command(SaveFormatJpg);
+        const auto jpgPreferences = app.exportOptions;
+        const auto dialogPngPath = (returnFolder / L"dropdown-export.png").wstring();
+        saveAs(dialogPngPath, false, false);
+        auto pngOptions = jpgPreferences;
+        pngOptions.jpg = false;
+        savedMatches(dialogPngPath, app.graphics.exportImage(app.image, app.document.items, pngOptions));
+        require(initialSaveFilter == 2 &&
+                    app.exportOptions == jpgPreferences && renderedExport().width == app.image.width,
+                "Save As PNG did not restore the border for that file while preserving JPG settings.");
+        app.exportOptions.jpg = true;
+        require(saveExtensionMatches(L"image.JPG") && saveExtensionMatches(L"image.jpeg") &&
+                    !saveExtensionMatches(L"image.png"), "JPG extension validation failed.");
+        app.exportOptions = {};
+        resetPreview();
         app.saveFolder.clear();
         // Another thread owns the clipboard so both automatic and manual failure paths run.
         const auto held = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -425,6 +619,8 @@ int wmain()
                      "Copy/Save with annotations and export effects, live edit "
                      "retention, redirected existing saves across multiple configured folders, "
                      "Recent save routing, destination feedback and unavailable-folder errors, "
+                     "real JPG current/Recent saves, PNG/JPG switching and restored border, "
+                     "native Save As format dropdown, extension updates, per-file effects and cancellation, "
                      "cancel/Recent/diagnostic isolation, busy clipboard retention and retry. User "
                      "clipboard untouched.\n";
     }

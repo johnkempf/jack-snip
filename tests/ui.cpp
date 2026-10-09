@@ -439,7 +439,7 @@ int wmain()
                 "The Settings panel still offers the retired Orange preset.");
         for (int id : {InterfaceClassic, InterfaceOrange, ThemePurple, ThemeBlue,
                        ThemeTeal, ThemeCustom, AppearanceLight, AppearanceDark, SettingsRenderer, Startup,
-                       SaveLocation, SettingsAreaKey, SettingsAllKey, AutoCopy, ProfessionalBorder,
+                       SaveLocation, SaveFormatPng, SaveFormatJpg, SettingsAreaKey, SettingsAllKey, AutoCopy, ProfessionalBorder,
                        ProfessionalBlur, ProfessionalRounded, SamtecLogo, ToggleActions,
                        ToggleTools, ToggleFormatting, FullScreen, Fit, Actual, NewSnip, InstantSnip,
                        RecentSnips, Copy, Save, SaveAs, Undo, Redo, DeleteSelected, Clear,
@@ -452,6 +452,18 @@ int wmain()
                     "The modern Settings panel lost a logo style.");
         command(SettingsPageFirst);
         auto settingsClick = [&](int id) {
+            const auto layout = settingsPanelLayout();
+            const auto target = std::find_if(layout.controls.begin(), layout.controls.end(),
+                                             [&](const SettingsControl &control) { return control.command == id; });
+            require(target != layout.controls.end(), "Settings control is missing from its page.");
+            if (target->content)
+            {
+                if (target->rect.top < layout.body.top)
+                    app.settingsScroll -= layout.body.top - target->rect.top;
+                else if (target->rect.bottom > layout.body.bottom)
+                    app.settingsScroll += target->rect.bottom - layout.body.bottom;
+                app.settingsScroll = std::clamp(app.settingsScroll, 0.0f, layout.maxScroll);
+            }
             buildButtons();
             auto control = std::find_if(app.buttons.begin() + app.settingsButtonsStart,
                                         app.buttons.end(), [&](const Button &b) { return b.command == id; });
@@ -545,6 +557,39 @@ int wmain()
                     renderedExport().width == themeExport.width + 40,
                 "Enabling Professional Border did not restore saved choices and their effects.");
         saveBytes(L"ui-export-components-on.png", app.graphics.png(renderEditorPreview()));
+        const auto pngChoices = app.exportOptions;
+        for (int layout : {InterfaceClassic, InterfaceOrange})
+        {
+            command(layout);
+            settingsClick(SaveFormatJpg);
+            require(app.exportOptions.jpg && settingsControlSelected(SaveFormatJpg) &&
+                        !enabled(ProfessionalBorder) && !enabled(ProfessionalBlur) &&
+                        !enabled(ProfessionalRounded) && !settingsControlSelected(ProfessionalBorder) &&
+                        !settingsControlSelected(ProfessionalBlur) && !settingsControlSelected(ProfessionalRounded) &&
+                        (GetMenuState(menu, ProfessionalBorder, MF_BYCOMMAND) & MF_GRAYED) &&
+                        renderedExport().width == app.image.width && previewImage().width == app.image.width &&
+                        previewPadding() == 0,
+                    "JPG did not disable Professional Border in Settings, menus, preview and export.");
+            const auto jpgLayout = settingsPanelLayout();
+            require(std::any_of(jpgLayout.controls.begin(), jpgLayout.controls.end(),
+                               [](const SettingsControl &control) {
+                                   return control.title == L"Professional Border is disabled for JPG.";
+                               }), "JPG Settings did not explain why Professional Border is disabled.");
+            saveBytes(app.classicUI ? L"ui-jpg-settings-top.png" : L"ui-jpg-settings-side.png",
+                      app.graphics.png(renderEditorPreview()));
+            command(ProfessionalBorder);
+            command(ProfessionalBlur);
+            command(ProfessionalRounded);
+            loadToolPreferences();
+            require(app.exportOptions.jpg && app.exportOptions.professionalBorder == pngChoices.professionalBorder &&
+                        app.exportOptions.professionalBlur == pngChoices.professionalBlur &&
+                        app.exportOptions.professionalRounded == pngChoices.professionalRounded,
+                    "JPG did not persist or changed the remembered PNG border choices.");
+            settingsClick(SaveFormatPng);
+            require(app.exportOptions == pngChoices && enabled(ProfessionalBlur) &&
+                        settingsControlSelected(ProfessionalBorder) && renderedExport().width == themeExport.width + 40,
+                    "Switching back to PNG did not restore Professional Border.");
+        }
         app.exportOptions = savedExportOptions;
         app.exportPreferencesDirty = true;
         require(saveToolPreferences(), "Cannot restore export preferences after component checks.");

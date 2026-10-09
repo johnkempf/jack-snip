@@ -606,7 +606,8 @@ Bitmap Graphics::exportImage(const Bitmap &image, const std::vector<Annotation> 
     auto content = flatten(image, items, editingText);
     if (options.samtecLogo)
         applySamtecLogo(content, options.samtecStyle);
-    if (!options.professionalBorder || (!options.professionalBlur && !options.professionalRounded))
+    if (options.jpg || !options.professionalBorder ||
+        (!options.professionalBlur && !options.professionalRounded))
         return content;
 
     const int padding = options.professionalBlur ? 20 : 0;
@@ -752,6 +753,70 @@ std::vector<uint8_t> Graphics::png(const Bitmap &bitmap)
         throw std::runtime_error("PNG encoding was incomplete.");
     return bytes;
 }
+std::vector<uint8_t> Graphics::jpeg(const Bitmap &bitmap)
+{
+    auto wic = wicFactory();
+    Com<IStream> stream;
+    check(CreateStreamOnHGlobal(nullptr, TRUE, stream.put()), "Cannot allocate JPG stream.");
+    Com<IWICBitmapEncoder> encoder;
+    check(wic->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, encoder.put()),
+          "Cannot create JPG encoder.");
+    check(encoder->Initialize(stream.get(), WICBitmapEncoderNoCache),
+          "Cannot initialize JPG encoder.");
+    Com<IWICBitmapFrameEncode> frame;
+    Com<IPropertyBag2> options;
+    check(encoder->CreateNewFrame(frame.put(), options.put()), "Cannot create JPG frame.");
+    PROPBAG2 properties[2]{};
+    properties[0].pstrName = const_cast<wchar_t *>(L"ImageQuality");
+    properties[1].pstrName = const_cast<wchar_t *>(L"JpegYCrCbSubsampling");
+    VARIANT values[2]{};
+    values[0].vt = VT_R4;
+    values[0].fltVal = .95f;
+    values[1].vt = VT_UI1;
+    values[1].bVal = WICJpegYCrCbSubsampling444;
+    check(options->Write(2, properties, values), "Cannot set JPG quality.");
+    check(frame->Initialize(options.get()), "Cannot initialize JPG frame.");
+    check(frame->SetSize(bitmap.width, bitmap.height), "Cannot set JPG size.");
+    check(frame->SetResolution(96, 96), "Cannot set JPG resolution.");
+    WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
+    check(frame->SetPixelFormat(&format), "Cannot set JPG pixel format.");
+    // Imported images can contain straight alpha. Composite onto white before
+    // encoding because JPG cannot preserve transparent source pixels.
+    std::vector<uint8_t> opaque(bitmap.pixels.size() / 4 * 3);
+    for (size_t pixel = 0; pixel < bitmap.pixels.size() / 4; ++pixel)
+    {
+        const unsigned alpha = bitmap.pixels[pixel * 4 + 3];
+        for (size_t channel = 0; channel < 3; ++channel)
+            opaque[pixel * 3 + channel] = static_cast<uint8_t>(
+                (bitmap.pixels[pixel * 4 + channel] * alpha + 255 * (255 - alpha) + 127) / 255);
+    }
+    Com<IWICBitmap> source;
+    check(wic->CreateBitmapFromMemory(bitmap.width, bitmap.height, GUID_WICPixelFormat24bppBGR,
+                                      bitmap.width * 3, static_cast<UINT>(opaque.size()),
+                                      opaque.data(), source.put()),
+          "Cannot create JPG source.");
+    Com<IWICFormatConverter> converter;
+    check(wic->CreateFormatConverter(converter.put()), "Cannot create JPG converter.");
+    check(converter->Initialize(source.get(), format, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom),
+          "Cannot convert JPG pixels.");
+    check(frame->WriteSource(converter.get(), nullptr), "Cannot encode JPG pixels.");
+    check(frame->Commit(), "Cannot finish JPG frame.");
+    check(encoder->Commit(), "Cannot finish JPG file.");
+    STATSTG stat{};
+    check(stream->Stat(&stat, STATFLAG_NONAME), "Cannot read JPG length.");
+    if (stat.cbSize.QuadPart > UINT32_MAX)
+        throw std::runtime_error("JPG file is too large.");
+    std::vector<uint8_t> bytes(static_cast<size_t>(stat.cbSize.QuadPart));
+    LARGE_INTEGER zero{};
+    check(stream->Seek(zero, STREAM_SEEK_SET, nullptr), "Cannot rewind JPG stream.");
+    ULONG read = 0;
+    check(stream->Read(bytes.data(), static_cast<ULONG>(bytes.size()), &read),
+          "Cannot read JPG stream.");
+    if (read != bytes.size())
+        throw std::runtime_error("JPG encoding was incomplete.");
+    return bytes;
+}
 Bitmap Graphics::decode(const std::vector<uint8_t> &bytes)
 {
     auto wic = wicFactory();
@@ -784,6 +849,53 @@ void Graphics::test()
     runModelTests();
     auto source = Bitmap::create(160, 120);
     std::fill(source.pixels.begin(), source.pixels.end(), 255);
+    {
+        // Real JPEG round trips, including white screenshots, dark pixels and alpha.
+        for (const auto channels : {std::array<uint8_t, 4>{255, 255, 255, 255},
+                                    std::array<uint8_t, 4>{0, 0, 0, 255},
+                                    std::array<uint8_t, 4>{160, 96, 64, 255},
+                                    std::array<uint8_t, 4>{60, 100, 140, 128},
+                                    std::array<uint8_t, 4>{0, 0, 0, 0}})
+        {
+            auto fixture = Bitmap::create(32, 24);
+            for (size_t i = 0; i < fixture.pixels.size(); i += 4)
+                std::copy(channels.begin(), channels.end(), fixture.pixels.begin() + i);
+            const auto original = fixture.pixels;
+            const auto bytes = jpeg(fixture);
+            const auto decoded = decode(bytes);
+            if (bytes.size() < 2 || bytes[0] != 0xff || bytes[1] != 0xd8 ||
+                decoded.width != fixture.width || decoded.height != fixture.height ||
+                fixture.pixels != original)
+                throw std::runtime_error("JPG encoding, dimensions or source preservation failed.");
+            for (size_t i = 0; i < decoded.pixels.size(); i += 4)
+            {
+                if (decoded.pixels[i + 3] != 255)
+                    throw std::runtime_error("JPG decoding must be opaque.");
+                for (size_t c = 0; c < 3; ++c)
+                {
+                    const int expected = (channels[c] * channels[3] + 255 * (255 - channels[3]) + 127) / 255;
+                    if (std::abs(decoded.pixels[i + c] - expected) > 4)
+                        throw std::runtime_error("JPG colors or transparent-pixel compositing failed.");
+                }
+            }
+        }
+        auto tiny = Bitmap::create(1, 1);
+        std::fill(tiny.pixels.begin(), tiny.pixels.end(), 255);
+        if (decode(jpeg(tiny)).pixels != tiny.pixels)
+            throw std::runtime_error("Tiny white JPG export failed.");
+        ExportOptions options{true, true};
+        options.jpg = true;
+        const auto plain = exportImage(source, {}, {false, true});
+        const auto jpgExport = exportImage(source, {}, options);
+        if (jpgExport.width != plain.width || jpgExport.height != plain.height ||
+            jpgExport.pixels != plain.pixels || !options.professionalBlur || !options.professionalRounded)
+            throw std::runtime_error("JPG did not suppress Professional Border and retain logo/content.");
+        options.jpg = false;
+        const auto restored = exportImage(source, {}, options);
+        if (restored.width != source.width + 40 || restored.height != source.height + 40)
+            throw std::runtime_error("PNG did not restore Professional Border after JPG.");
+        saveBytes(L"jpg-export-preview.jpg", jpeg(jpgExport));
+    }
     {
         Annotation highlight;
         highlight.kind = Tool::Highlight;
