@@ -1819,10 +1819,10 @@ void buildButtons()
             add(Undo, L"", 32, 14);
             x = 238;
             add(Redo, L"", 32, 14);
-            x = client.right - 316;
+            x = client.right - 340;
             add(RecentSnips, L"Recent", 112, 14);
             x += 12;
-            add(Save, L"Save", 80, 14);
+            add(SaveAs, L"Save as", 104, 14);
             x += 12;
             add(Copy, L"Copy", 88, 14);
         }
@@ -2029,6 +2029,9 @@ void buildButtons()
                 break;
             case Save:
                 hint = L"Save PNG (Ctrl+S)";
+                break;
+            case SaveAs:
+                hint = L"Choose where to save the PNG (Ctrl+Shift+S)";
                 break;
             case RecentSnips:
                 hint = L"Reopen one of the last 10 snips from this session (Ctrl+Shift+R)";
@@ -2445,6 +2448,7 @@ void drawUIIcon(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush, int id, Poin
         line(3, 3, 3, 12);
         break;
     case Save:
+    case SaveAs:
         line(10, 2, 10, 13);
         line(6, 9, 10, 13);
         line(10, 13, 14, 9);
@@ -4303,19 +4307,36 @@ bool chooseSave(std::wstring &path)
     }
     return true;
 }
+bool chooseSaveDestination(std::wstring &path, bool saveAs)
+{
+    if (path.empty() || saveAs)
+        return chooseSave(path);
+    if (app.saveFolder.empty())
+        return true;
+    if (!existingFolder(app.saveFolder))
+        throw std::runtime_error("The save folder is unavailable. Choose a new Save location "
+                                 "in Settings or use Save As.");
+    const auto destination = initialSavePath(path);
+    // Changing folders must not silently overwrite another image with the same name.
+    const bool different = _wcsicmp(destination.c_str(), path.c_str()) != 0;
+    path = destination;
+    if (different && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return chooseSave(path);
+    return true;
+}
 void saveImage(bool saveAs = false)
 {
     if (!hasImage())
         return;
     std::wstring path = app.savePath;
-    if ((path.empty() || saveAs) && !chooseSave(path))
+    if (!chooseSaveDestination(path, saveAs))
         return;
     auto bitmap = renderedExport();
     saveBytes(path, app.graphics.png(bitmap));
     app.savePath = path;
     app.dirty = false;
     updateTitle();
-    status(L"Saved PNG with all annotations");
+    status(L"Saved PNG: " + path);
 }
 void saveRecentSnip(int index, bool saveAs)
 {
@@ -4336,7 +4357,7 @@ void saveRecentSnip(int index, bool saveAs)
     const auto sequence = snip.sequence;
     const auto bitmap =
         app.graphics.exportImage(snip.image, snip.document.items, app.exportOptions);
-    if ((path.empty() || saveAs) && !chooseSave(path))
+    if (!chooseSaveDestination(path, saveAs))
         return;
     saveBytes(path, app.graphics.png(bitmap));
     // The modal picker pumps messages; a new capture may have changed Recent.
@@ -4345,7 +4366,7 @@ void saveRecentSnip(int index, bool saveAs)
         app.recent[index].savePath = path;
         app.recent[index].dirty = false;
     }
-    status(L"Saved recent snip " + std::to_wstring(sequence) + L" as PNG with all annotations");
+    status(L"Saved recent snip " + std::to_wstring(sequence) + L": " + path);
 }
 void closeSettings()
 {

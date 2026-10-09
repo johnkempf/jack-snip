@@ -41,12 +41,12 @@ void buildClassicButtons()
         add(FullScreen, L"", 36, 11);
         x = 344;
         add(CropTool, L"Crop", 82, 11);
-        x = clientDips().right - 350;
+        x = clientDips().right - 374;
         add(RecentSnips, L"Recent", 114, 11);
-        x = clientDips().right - 226;
+        x = clientDips().right - 250;
         add(Copy, L"Copy", 114, 11);
         x += 6;
-        add(Save, L"Save", 82, 11);
+        add(SaveAs, L"Save as", 106, 11);
     }
     if (!app.fullScreen && !(app.collapsedRows & 2))
     {

@@ -293,6 +293,67 @@ int wmain()
         }
         app.exportOptions = {};
         resetPreview();
+        // Save must follow Settings even when this capture already has a filename.
+        const auto originalSavePath = app.savePath;
+        const auto originalRecentPath = app.recent[0].savePath;
+        const auto saveRoot = std::filesystem::current_path() / L"save folders";
+        const auto firstFolder = saveRoot / L"first";
+        const auto secondFolder = saveRoot / L"second";
+        std::filesystem::create_directories(firstFolder);
+        std::filesystem::create_directories(secondFolder);
+        auto readBytes = [](const std::wstring &path) {
+            std::ifstream file(std::filesystem::path(path), std::ios::binary);
+            return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), {});
+        };
+        const auto originalBytes = readBytes(originalSavePath);
+        require(!originalBytes.empty(), "The previous save fixture is missing.");
+        auto ctrlS = [&] {
+            require(SetKeyboardState(ctrlKeyboard), "Cannot set private Ctrl+S keyboard state.");
+            SendMessageW(app.window, WM_KEYDOWN, 'S', 0);
+            require(SetKeyboardState(keyboard), "Cannot restore keyboard after Ctrl+S.");
+        };
+        setSaveFolder(firstFolder.wstring());
+        ctrlS();
+        const auto firstPath =
+            (firstFolder / std::filesystem::path(originalSavePath).filename()).wstring();
+        require(app.savePath == firstPath && !app.dirty,
+                "Save did not redirect an existing filename to the first configured folder.");
+        savedMatches(firstPath, renderedExport());
+        require(app.status == L"Saved PNG: " + firstPath,
+                "Save confirmation did not identify the actual destination.");
+        setSaveFolder(secondFolder.wstring());
+        ctrlS();
+        const auto secondPath =
+            (secondFolder / std::filesystem::path(originalSavePath).filename()).wstring();
+        require(app.savePath == secondPath,
+                "Repeated Save did not follow the newly configured folder.");
+        savedMatches(secondPath, renderedExport());
+        require(readBytes(originalSavePath) == originalBytes,
+                "Redirecting Save changed the original file.");
+        const auto liveSavePath = app.savePath;
+        const auto liveIndex = app.activeRecent;
+        const auto recentExport = app.graphics.exportImage(
+            app.recent[0].image, app.recent[0].document.items, app.exportOptions);
+        saveRecentSnip(0, false);
+        const auto recentPath =
+            (secondFolder / std::filesystem::path(originalRecentPath).filename()).wstring();
+        require(app.recent[0].savePath == recentPath && !app.recent[0].dirty &&
+                    app.savePath == liveSavePath && app.activeRecent == liveIndex,
+                "Recent Save did not follow the configured folder while preserving the editor.");
+        savedMatches(recentPath, recentExport);
+        app.saveFolder = (saveRoot / L"unavailable").wstring();
+        bool rejectedUnavailable = false;
+        try
+        {
+            saveImage();
+        }
+        catch (const std::runtime_error &)
+        {
+            rejectedUnavailable = true;
+        }
+        require(rejectedUnavailable && app.savePath == liveSavePath,
+                "An unavailable save folder silently saved somewhere else.");
+        app.saveFolder.clear();
         // Another thread owns the clipboard so both automatic and manual failure paths run.
         const auto held = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         const auto release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -362,7 +423,8 @@ int wmain()
                      "inert plain letters, annotations, disabled capture, "
                      "right-click canvas Copy/Save and keyboard context menu, direct Recent "
                      "Copy/Save with annotations and export effects, live edit "
-                     "retention, "
+                     "retention, redirected existing saves across multiple configured folders, "
+                     "Recent save routing, destination feedback and unavailable-folder errors, "
                      "cancel/Recent/diagnostic isolation, busy clipboard retention and retry. User "
                      "clipboard untouched.\n";
     }

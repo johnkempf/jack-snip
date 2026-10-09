@@ -52,7 +52,7 @@ void paintClassicEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush
         divider(180, 19, 39);
         if (hasImage() && client.right > 1100)
             text(std::to_wstring(app.image.width) + L" \u00D7 " + std::to_wstring(app.image.height),
-                 {client.right - 490, 11, client.right - 362, 47}, Muted,
+                 {client.right - 514, 11, client.right - 386, 47}, Muted,
                  app.graphics.smallFont.get(), true);
     }
     const auto layout = toolbarLayout();
@@ -236,6 +236,7 @@ void paintClassicEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush
                  app.graphics.font.get());
         }
         else if (button.command == NewSnip || button.command == Copy || button.command == Save ||
+                 button.command == SaveAs ||
                  button.command == SelectTool || button.command == PenTool ||
                  button.command == TextTool || button.command == HighlightTool ||
                  button.command == EraserTool)

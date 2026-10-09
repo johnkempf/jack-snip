@@ -24,6 +24,9 @@ Saved selections of the retired Orange preset switch to Purple; saved custom col
 ## Use
 
 Click **New snip** and drag a rectangle. Add annotations, then press **Ctrl+C** to copy or **Ctrl+S** to save. See [Quick Start](dist/Quick%20Start.txt) for the controls.
+**Ctrl+S** uses the current **Settings → General → Save location**, including for a snip
+already saved in another folder. It keeps the filename. The top-right **Save as** button
+(**Ctrl+Shift+S**) always opens a picker so you can choose a filename and destination.
 The capture icon on the welcome screen also starts a snip. **Recent** keeps the last ten captures;
 Right-click the open snip or a Recent thumbnail for **Copy**, **Save**, and **Save As**.
 Recent actions include annotations and export effects without reopening the capture.

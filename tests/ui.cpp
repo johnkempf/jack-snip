@@ -74,6 +74,9 @@ int wmain()
         require(CreateWindowExW(0, MainClass, L"UI test", WS_OVERLAPPEDWINDOW, 0, 0, 1280, 840,
                                 nullptr, createMenu(), app.instance, nullptr),
                 "Cannot create UI test editor.");
+        // The initial fixture uses pixel coordinates; do not inherit the host's display scaling.
+        // Later cases explicitly exercise 100/150/200% DPI with matching window sizes.
+        app.dpi = 1;
         app.windowedMenu = GetMenu(app.window);
         app.menuHidden = true;
         SetMenu(app.window, nullptr);
@@ -183,9 +186,17 @@ int wmain()
         const auto originalView = app.view;
         auto button = [&](int id) {
             buildButtons();
+            require(app.fullScreen || (app.collapsedRows & 1) ||
+                        (std::count_if(app.buttons.begin(), app.buttons.end(), [](const Button &b) {
+                             return b.command == SaveAs && b.label == L"Save as";
+                         }) == 1 &&
+                         std::none_of(app.buttons.begin(), app.buttons.end(),
+                                      [](const Button &b) { return b.command == Save; })),
+                    "The toolbar must offer Save As instead of quick Save.");
             auto b = std::find_if(app.buttons.begin(), app.buttons.end(),
                                   [&](const Button &b) { return b.command == id; });
-            require(b != app.buttons.end(), "Required UI control is missing.");
+            if (b == app.buttons.end())
+                throw std::runtime_error("Required UI control is missing: " + std::to_string(id));
             return b->rect;
         };
         auto mouse = [&](Point p) {
@@ -215,7 +226,7 @@ int wmain()
             };
             const auto neutral = renderEditorPreview();
             for (int id : {PenTool, HighlightTool, TextTool, EraserTool, CircleTool,
-                           ArrowTool, CheckTool, LineTool, Copy, Save})
+                           ArrowTool, CheckTool, LineTool, Copy, SaveAs})
                 require(background(neutral, id) == uiSurface(),
                         "An inactive Classic control has an inconsistent or accent-tinted surface.");
             for (int id : {PenTool, HighlightTool, TextTool})

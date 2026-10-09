@@ -20,7 +20,8 @@ including "The snipping tool of your dreams!" It avoids repeating the last one.
 Click New snip, drag an area, and release. Pen is selected automatically.
 New captures copy automatically by default. Settings > Auto copy new snips turns this off.
 Ctrl+C copies the current image with all annotations, including edits made after capture.
-Ctrl+S saves a PNG; Ctrl+Shift+S chooses a new filename.
+Ctrl+S saves a PNG to your configured save folder; Ctrl+Shift+S chooses a destination.
+The top-right Save as button always opens the filename and folder picker.
 Right-click the open snip or a Recent thumbnail for Copy, Save, and Save As.
 Recent actions include annotations and export effects without switching the open snip.
 Ctrl+Alt+F instantly captures all monitors and the mouse pointer, preserving hover menus.
@@ -98,7 +99,7 @@ A whole slider drag is one undo step.
 Esc or loss of pointer capture cancels the drag and restores the previous size.
 Opacity adjusts the selected annotation or the next mark, including Copy and Save.
 Highlights retain their existing translucent blending beneath the opacity setting.
-Undo/redo is beside New snip; Copy and Save are at the top right.
+Undo/redo is beside New snip; Copy and Save as are at the top right.
 A successful Copy or Ctrl+C brightens the image with a white pulse, fading out in 500 ms.
 "Copied to clipboard" stays visible for 1.4 seconds, including on light screenshots.
 The pulse follows image transparency and adds no colored tint or outline.
@@ -162,7 +163,9 @@ No restart is needed. Copied and saved image quality is unchanged.
 Settings > Save location... lets you choose the default folder for saved snips.
 Click Use this folder to remember it immediately, including after restarting.
 New Save/Save As dialogs start there; you can still choose another destination.
-Ctrl+S on an already saved snip updates its existing file.
+Ctrl+S on an already saved snip keeps its filename and uses the configured folder,
+even after you change the folder in Settings. Without a configured folder it updates
+the existing file. Save as chooses a destination for that save.
 
 Settings > Professional Border > Enabled is optional and OFF by default.
 Blur and Rounded corners show OFF and are unavailable until Professional Border is on.

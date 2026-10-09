@@ -99,7 +99,7 @@ void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
         {
             fill({188, 20, 189, 44}, edge);
             fill({286, 20, 287, 44}, edge);
-            const float right = client.right - 336;
+            const float right = client.right - 360;
             if (right > 328)
             {
                 std::wstring filename =
@@ -367,7 +367,7 @@ void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
         else
         {
             const bool primary = b.command == NewSnip || b.command == CaptureMenu;
-            const bool outlined = b.command == Copy || b.command == Save ||
+            const bool outlined = b.command == Copy || b.command == Save || b.command == SaveAs ||
                                   b.command == RecentSnips || b.command == TextBold ||
                                   b.command == TextBox || b.command == ToggleFit;
             if (primary)
@@ -403,7 +403,7 @@ void paintEditorChrome(ID2D1RenderTarget *rt, ID2D1SolidColorBrush *brush)
                         outlined, on ? uiSelectedBorder() : edge);
             if (b.command == CaptureMenu)
                 chevron({(r.left + r.right) / 2, (r.top + r.bottom) / 2}, fg);
-            else if (b.command == NewSnip || b.command == Copy || b.command == Save ||
+            else if (b.command == NewSnip || b.command == Copy || b.command == Save || b.command == SaveAs ||
                      b.command == RecentSnips)
             {
                 drawUIIcon(rt, brush, b.command, {r.left + 10, (r.top + r.bottom) / 2 - 10}, fg);
